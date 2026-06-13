@@ -1,0 +1,18 @@
+[package]
+name = "usbip-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "USB/IP protocol types and serialization — shared between server, client, and Android JNI"
+
+[dependencies]
+byteorder.workspace = true
+zerocopy.workspace = true
+crc32fast.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+ring.workspace = true
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rusb.workspace = true
