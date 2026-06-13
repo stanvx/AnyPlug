@@ -1,4 +1,4 @@
-# USB/IP Passthrough — Development Roadmap
+# AnyPlug — Development Roadmap
 
 Project roadmap and milestone tracking for the USB/IP passthrough system.
 
@@ -85,7 +85,7 @@ Project roadmap and milestone tracking for the USB/IP passthrough system.
 - [x] Jetpack Compose UI (`android/app/src/main/java/.../ui/MainScreen.kt`)
 - [x] Server mode with USB Host API (`UsbIpServer.kt`)
 - [x] Client mode with TCP protocol (`UsbIpClient.kt`)
-- [x] Foreground service with wake lock (`UsbPassthroughService.kt`)
+- [x] Foreground service with wake lock (`AnyPlugService.kt`)
 - [x] mDNS discovery in UI
 - [x] Rust compilation via rust-android-gradle plugin
 - [x] Gradle build system

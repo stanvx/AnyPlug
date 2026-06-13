@@ -1,4 +1,4 @@
-# USB Passthrough — Cross-Platform USB/IP App
+# AnyPlug — Cross-Platform USB/IP App
 
 **Pass any USB device over the network between Android, Android TV, and Windows with sub-millisecond latency.**
 
@@ -44,10 +44,10 @@ The device's native drivers, force feedback, and all features — work exactly a
 winget install USB-Passthrough
 
 # Server (machine with USB device — keyboard, gamepad, flash drive, etc.)
-usb-passthrough serve --device "My Keyboard"
+anyplug serve --device "My Keyboard"
 
 # Client (gaming machine)
-usb-passthrough connect --server 192.168.1.100 --device "My Keyboard"
+anyplug connect --server 192.168.1.100 --device "My Keyboard"
 ```
 
 ### Android Phone → Android TV
@@ -126,8 +126,8 @@ Force feedback at 250 Hz update rate requires <4ms latency. We have 5x headroom 
 # Prerequisites: Rust 1.78+, Android SDK 34+, JDK 17+
 
 # Clone
-git clone https://github.com/stanvx/usb-passthrough
-cd usb-passthrough
+git clone https://github.com/stanvx/anyplug
+cd anyplug
 
 # Build all Rust crates
 cargo build --release

@@ -1,13 +1,13 @@
 [package]
-name = "usb-passthrough"
+name = "anyplug"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "USB/IP Passthrough — Windows service + GUI tray client"
+description = "AnyPlug — Windows service + GUI tray client"
 
 [[bin]]
-name = "usb-passthrough"
+name = "anyplug"
 path = "src/main.rs"
 
 [dependencies]

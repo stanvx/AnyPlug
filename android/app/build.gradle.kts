@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.usbpassthrough"
+    namespace = "com.anyplug"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.usbpassthrough"
+        applicationId = "com.anyplug"
         minSdk = 28  // Android 9 — USB Host API mature
         targetSdk = 34
         versionCode = 1

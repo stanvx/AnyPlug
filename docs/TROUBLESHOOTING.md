@@ -1,4 +1,4 @@
-# USB/IP Passthrough — Troubleshooting Guide
+# AnyPlug — Troubleshooting Guide
 
 Diagnostic procedures and solutions for common USB/IP passthrough issues.
 
@@ -287,7 +287,7 @@ The Windows VHCI is installed automatically by the installer. If missing:
 pnputil /enum-drivers | findstr usbip
 
 # Install manually from admin prompt
-pnputil /add-driver "C:\Program Files\USB Passthrough\drivers\usbipvhci.inf" /install
+pnputil /add-driver "C:\Program Files\AnyPlug\drivers\usbipvhci.inf" /install
 ```
 
 ---
@@ -313,7 +313,7 @@ Android may kill the foreground service if the device is under memory pressure.
 **Fix:**
 - Disable battery optimization for the app:
   ```
-  Settings → Apps → USB Passthrough → Battery → Unrestricted
+  Settings → Apps → AnyPlug → Battery → Unrestricted
   ```
 - In the app, the persistent notification prevents most Android versions from killing it.
 
@@ -322,7 +322,7 @@ Android may kill the foreground service if the device is under memory pressure.
 Android 12+ restricts USB device access. Grant permission:
 
 1. When the app asks for USB permission, tap "Allow".
-2. If missed, go to: `Settings → Connected devices → USB → USB Passthrough → Grant`.
+2. If missed, go to: `Settings → Connected devices → USB → AnyPlug → Grant`.
 
 ### Non-rooted device — uinput fallback issues
 
@@ -368,11 +368,11 @@ Windows Defender Firewall may block usbip-server.
 
 ```powershell
 # Add rule for the server
-New-NetFirewallRule -DisplayName "USB Passthrough Server" `
+New-NetFirewallRule -DisplayName "AnyPlug Server" `
   -Direction Inbound -Protocol TCP -LocalPort 3240 -Action Allow
 
 # Add rule for the client
-New-NetFirewallRule -DisplayName "USB Passthrough Client" `
+New-NetFirewallRule -DisplayName "AnyPlug Client" `
   -Direction Outbound -Protocol TCP -RemotePort 3240 -Action Allow
 ```
 
@@ -481,9 +481,9 @@ RUST_LOG=trace usbip-server  # Very verbose — URB dumps
 |----------|----------|
 | Linux (systemd) | `journalctl -u usbip-server -f` |
 | Linux (manual) | stderr/stdout |
-| Windows (service) | `%PROGRAMDATA%\usb-passthrough\logs\service.log` |
-| Windows (GUI) | `%APPDATA%\usb-passthrough\logs\app.log` |
-| Android | `adb logcat -s UsbPassthrough,RustBridge` |
+| Windows (service) | `%PROGRAMDATA%\anyplug\logs\service.log` |
+| Windows (GUI) | `%APPDATA%\anyplug\logs\app.log` |
+| Android | `adb logcat -s AnyPlug,RustBridge` |
 
 ### Common log patterns
 

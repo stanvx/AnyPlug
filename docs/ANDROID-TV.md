@@ -1,4 +1,4 @@
-# USB/IP Passthrough — Android TV Guide
+# AnyPlug — Android TV Guide
 
 Using USB/IP passthrough on Android TV / Google TV devices to share or import USB racing wheels.
 
@@ -75,15 +75,15 @@ Android TV devices don't have the Google Play Store listing for this app, so you
 
 # 4. Install via ADB
 adb connect <TV_IP_ADDRESS>:5555
-adb install usb-passthrough-tv-release.apk
+adb install anyplug-tv-release.apk
 
 # 5. Verify
-adb shell pm list packages | grep usbpassthrough
+adb shell pm list packages | grep anyplug
 ```
 
 ### Using a USB Drive
 
-1. Copy `usb-passthrough-tv-release.apk` to a USB drive.
+1. Copy `anyplug-tv-release.apk` to a USB drive.
 2. Insert into the TV.
 3. Use a file manager app (like X-plore File Manager) to navigate to the USB drive.
 4. Tap the APK to install.
@@ -109,15 +109,15 @@ Run the server on your Android TV to export a locally-connected G920 wheel to th
 ### Setup
 
 1. Connect the G920 wheel to your Android TV via USB (or USB OTG + powered hub).
-2. Open the "USB Passthrough TV" app from the Android TV home screen.
+2. Open the "AnyPlug TV" app from the Android TV home screen.
 3. You'll see the main interface optimized for d-pad navigation.
 4. Select the G920 wheel from the "Local USB Devices" list.
 5. Press **"Share"** or the center button on your remote.
 
 ### What Happens
 
-1. The app starts a **foreground service** (`UsbPassthroughService`).
-2. A persistent notification appears: "USB Passthrough — Server running".
+1. The app starts a **foreground service** (`AnyPlugService`).
+2. A persistent notification appears: "AnyPlug — Server running".
 3. The server begins mDNS advertisement (`_usbip._tcp.local.`).
 4. The server listens on TCP port 3240.
 
@@ -127,7 +127,7 @@ The TV interface shows:
 
 ```
 ┌──────────────────────────────┐
-│  USB Passthrough             │
+│  AnyPlug             │
 │                              │
 │  ● Running — Server mode     │  ← Green when active
 │  Sharing: G920 Racing Wheel  │
@@ -144,10 +144,10 @@ The TV interface shows:
 The server holds a partial wake lock to prevent the TV from sleeping:
 
 ```kotlin
-// UsbPassthroughService.kt
+// AnyPlugService.kt
 wakeLock = pm.newWakeLock(
     PowerManager.PARTIAL_WAKE_LOCK,
-    "usb-passthrough:wakelock"
+    "anyplug:wakelock"
 )
 ```
 
@@ -164,7 +164,7 @@ Import a remote G920 wheel to your Android TV. The wheel will appear as if local
 ### Setup
 
 1. Ensure a USB/IP server is running on the network (Linux PC, Windows PC, or another Android device).
-2. Open the "USB Passthrough TV" app.
+2. Open the "AnyPlug TV" app.
 3. Navigate to the **Client** tab.
 4. Select a discovered server from the list, or enter a manual server address.
 5. Select the device you want to import.
@@ -181,7 +181,7 @@ Import a remote G920 wheel to your Android TV. The wheel will appear as if local
 
 ```
 ┌──────────────────────────────┐
-│  USB Passthrough             │
+│  AnyPlug             │
 │                              │
 │  ● Running — Client mode     │
 │  Connected to:               │
@@ -198,13 +198,13 @@ Import a remote G920 wheel to your Android TV. The wheel will appear as if local
 
 ## Remote Control Navigation
 
-The Android TV module (`android/tv/src/main/java/com/usbpassthrough/tv/TvMainActivity.kt`) uses Compose UI optimized for d-pad remotes.
+The Android TV module (`android/tv/src/main/java/com/anyplug/tv/TvMainActivity.kt`) uses Compose UI optimized for d-pad remotes.
 
 ### Navigation Map
 
 ```
 ┌───────────────────────────────────┐
-│      USB Passthrough TV          │
+│      AnyPlug TV          │
 │  ┌─────────────────────────────┐ │
 │  │  [Server]    [Client]      │ │  ← Tab navigation (Left/Right)
 │  └─────────────────────────────┘ │
@@ -240,13 +240,13 @@ Android TV voice search is not supported for this app. All interactions are via 
 
 ## Foreground Service on TV
 
-The app runs as a foreground service (`UsbPassthroughService`), which is critical on Android 8+ to prevent the OS from killing it.
+The app runs as a foreground service (`AnyPlugService`), which is critical on Android 8+ to prevent the OS from killing it.
 
 ### Notification Channel
 
 ```kotlin
-val notification = NotificationCompat.Builder(this, "usb_passthrough_channel")
-    .setContentTitle("USB Passthrough")
+val notification = NotificationCompat.Builder(this, "anyplug_channel")
+    .setContentTitle("AnyPlug")
     .setContentText("Service running")
     .setSmallIcon(android.R.drawable.ic_menu_share)
     .setOngoing(true)
@@ -306,7 +306,7 @@ mDNS discovery works on Android TV only if the network allows multicast. Some co
 
 Android TV devices often have limited storage. The APK is ~8 MB, but logs may accumulate. The app writes logs to:
 ```
-/data/data/com.usbpassthrough/files/logs/
+/data/data/com.anyplug/files/logs/
 ```
 Clean up old logs periodically if storage is limited.
 
@@ -351,17 +351,17 @@ adb shell ping <SERVER_IP>
 adb shell nc -zv <SERVER_IP> 3240
 
 # Check app logs
-adb logcat -s UsbPassthrough
+adb logcat -s AnyPlug
 ```
 
 ### Service Keeps Stopping
 
 ```bash
 # Check for low memory
-adb shell dumpsys meminfo com.usbpassthrough
+adb shell dumpsys meminfo com.anyplug
 
 # Check if watchdog is killing the service
-adb shell dumpsys activity processes | grep usbpassthrough
+adb shell dumpsys activity processes | grep anyplug
 ```
 
 ### Force Feedback Not Working on Rooted TV
@@ -385,13 +385,13 @@ Quick reference:
 
 ```bash
 # Build the TV module
-cd /home/localadmin/usb-passthrough/android
+cd /home/localadmin/anyplug/android
 ./gradlew :tv:assembleRelease
 
 # Sign the APK
 ./gradlew :tv:signRelease
 
-# Output at: android/tv/build/outputs/apk/release/usb-passthrough-tv-release.apk
+# Output at: android/tv/build/outputs/apk/release/anyplug-tv-release.apk
 ```
 
 ---
@@ -437,8 +437,8 @@ cd /home/localadmin/usb-passthrough/android
 
 ## References
 
-- `android/tv/src/main/java/com/usbpassthrough/tv/TvMainActivity.kt` — TV UI entry point
-- `android/app/src/main/java/com/usbpassthrough/UsbPassthroughService.kt` — Foreground service
-- `android/app/src/main/java/com/usbpassthrough/ui/MainScreen.kt` — Base UI components
-- `android/app/src/main/java/com/usbpassthrough/client/UsbIpClient.kt` — Client protocol implementation
-- `android/app/src/main/java/com/usbpassthrough/server/UsbIpServer.kt` — Server protocol implementation
+- `android/tv/src/main/java/com/anyplug/tv/TvMainActivity.kt` — TV UI entry point
+- `android/app/src/main/java/com/anyplug/AnyPlugService.kt` — Foreground service
+- `android/app/src/main/java/com/anyplug/ui/MainScreen.kt` — Base UI components
+- `android/app/src/main/java/com/anyplug/client/UsbIpClient.kt` — Client protocol implementation
+- `android/app/src/main/java/com/anyplug/server/UsbIpServer.kt` — Server protocol implementation

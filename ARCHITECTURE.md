@@ -1,4 +1,4 @@
-# USB Passthrough — Architecture
+# AnyPlug — Architecture
 
 ## System Overview
 
@@ -118,7 +118,7 @@ CLIENT APP                    SERVER APP                  PHYSICAL USB
 
 ```
 ┌───────────────────────────────────────┐
-│          usb-passthrough.exe          │
+│          anyplug.exe          │
 │                                       │
 │  Server:                              │
 │    libusb (via WinUSB/libusbK)        │
@@ -199,8 +199,8 @@ Android TV is the same APK with a different UI module. The `tv/` module provides
 ## Configuration File
 
 ```toml
-# ~/.config/usb-passthrough/config.toml
-# or /sdcard/Android/data/com.usbpassthrough/files/config.toml
+# ~/.config/anyplug/config.toml
+# or /sdcard/Android/data/com.anyplug/files/config.toml
 
 [server]
 bind_address = "0.0.0.0"

@@ -1,4 +1,4 @@
-# USB/IP Passthrough — Performance Guide
+# AnyPlug — Performance Guide
 
 Latency benchmarks, buffer tuning, network considerations, and optimization strategies for USB/IP passthrough.
 
@@ -199,6 +199,34 @@ sudo sysctl -w net.ipv4.tcp_wmem="4096 65536 262144"
 ```
 
 These aren't required but can help on systems with extremely aggressive buffer auto-tuning.
+
+### Congestion Control: BBR vs CUBIC
+
+The default Linux congestion control algorithm (CUBIC) is optimized for bulk throughput, not latency-sensitive workloads. For USB/IP passthrough, **BBR (Bottleneck Bandwidth and Round-trip propagation time)** is strongly recommended:
+
+| Algorithm | Latency Under Load | Recovery Time | Best For |
+|-----------|-------------------|---------------|----------|
+| **BBR** | Minimal increase | Fast (RTT-based) | Latency-sensitive (USB/IP, gaming, VoIP) |
+| **CUBIC** | Can spike 2-5x | Slow (loss-based) | Bulk throughput (downloads, backups) |
+| **Reno** | Moderate spikes | Moderate | Legacy compatibility |
+
+Enable BBR:
+
+```bash
+# Check current algorithm
+sysctl net.ipv4.tcp_congestion_control
+
+# Enable BBR (requires kernel 4.9+)
+sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+
+# Verify it took effect
+ss -ti | grep bbr
+
+# Make permanent
+echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.conf
+```
+
+BBR maintains low latency even when the network is saturated — critical for USB/IP where a single dropped or delayed packet translates directly to a missed polling interval.
 
 ### Keepalive Settings
 
@@ -464,7 +492,7 @@ ping -i 0.001 <SERVER_IP>
 
 ```bash
 # Build and run the benchmark
-cd /home/localadmin/usb-passthrough
+cd /home/localadmin/anyplug
 cargo run --release --bin usbip-bench -- --server <SERVER_IP> --duration 30
 
 # Output:

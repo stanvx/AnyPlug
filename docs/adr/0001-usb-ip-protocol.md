@@ -1,6 +1,6 @@
 # USB/IP protocol as the wire format
 
-The system speaks the Linux kernel's USB/IP protocol (USB/IP v1.1.1, see PROTOCOL.md) for the server-client transport rather than a custom protocol or a proprietary alternative like VirtualHere or usbip-virtualization. The protocol is RFC-documented, has been upstream in the Linux kernel since 2008, and is implemented in `shared/usbip-core/src/protocol.rs`. The decision buys interoperability with the kernel's own `usbip-host` and `vhci-hcd` modules (so a usb-passthrough server can be consumed by a stock Linux client and vice versa) and a battle-tested URB submission / completion flow that already handles cancellation, error propagation, and partial transfers correctly.
+The system speaks the Linux kernel's USB/IP protocol (USB/IP v1.1.1, see PROTOCOL.md) for the server-client transport rather than a custom protocol or a proprietary alternative like VirtualHere or usbip-virtualization. The protocol is RFC-documented, has been upstream in the Linux kernel since 2008, and is implemented in `shared/usbip-core/src/protocol.rs`. The decision buys interoperability with the kernel's own `usbip-host` and `vhci-hcd` modules (so a anyplug server can be consumed by a stock Linux client and vice versa) and a battle-tested URB submission / completion flow that already handles cancellation, error propagation, and partial transfers correctly.
 
 ## Considered Options
 

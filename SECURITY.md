@@ -2,7 +2,7 @@
 
 ## Project Status
 
-usb-passthrough is alpha software, pre-1.0. The transport, crypto,
+anyplug is alpha software, pre-1.0. The transport, crypto,
 and platform integrations are under active development. Treat it as
 an early-adopter build: useful, not production-hardened.
 
@@ -20,7 +20,7 @@ The preferred channel is GitHub Security Advisories. The private
 advisory form lets you share details, PoC code, and a working draft
 fix with the maintainer without disclosing the issue publicly.
 
-- **Primary:** [Open a private security advisory](https://github.com/stanvx/usb-passthrough/security/advisories/new)
+- **Primary:** [Open a private security advisory](https://github.com/stanvx/anyplug/security/advisories/new)
 - **Fallback (low-sensitivity only):** open a public GitHub issue
   tagged `security`. Use this only when public discussion does not
   materially help an attacker — for example, a hardening suggestion
@@ -53,7 +53,7 @@ HKDF-SHA256. In scope:
   detected. A decrypt path that falls back to `Aad::empty()` is a
   finding.
 - HKDF domain separation. `HKDF_INFO`
-  (`"usb-passthrough-session-key-v1"`) is the only barrier
+  (`"anyplug-session-key-v1"`) is the only barrier
   against cross-protocol key reuse. Changing it, or accepting
   attacker-controlled `info`, is a finding.
 - `hex_encode` uses `unsafe { String::from_utf8_unchecked(...) }`.

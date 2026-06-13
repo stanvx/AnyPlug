@@ -1,15 +1,17 @@
-//! USB/IP Passthrough — Windows application.
+//! AnyPlug — Windows application.
 //!
 //! Entry point for the CLI (`serve`, `connect`) and GUI (`gui`) modes.
 //! When run without a subcommand, defaults to launching the system tray GUI.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-#![allow(unused_imports)]  // workspace deps imported for future use
+#![allow(unused_imports)] // workspace deps imported for future use
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+use usbip_core::error::UsbIpError;
 
 mod windows_usb;
 
@@ -18,14 +20,13 @@ mod windows_usb;
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "usb-passthrough")]
-#[command(about = "USB/IP Passthrough — Share or use USB devices over the network")]
+#[command(name = "anyplug")]
+#[command(about = "AnyPlug — Share or use USB devices over the network")]
 #[command(long_about = "\
-Windows application for USB/IP device sharing.\n\
+AnyPlug Windows application for USB/IP device sharing.\n\
 \n  serve   — Start the USB/IP server to export local USB devices\n\
   connect — Connect to a remote USB/IP server and import a device\n\
-  gui     — Launch the system-tray GUI (default)",
-)]
+  gui     — Launch the system-tray GUI (default)")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -103,7 +104,7 @@ fn parse_vid_pid(s: &str) -> Result<(u16, u16), String> {
 // Entry point
 // ---------------------------------------------------------------------------
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     // Initialize tracing
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(true))
@@ -112,35 +113,34 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Commands::Gui) {
-        Commands::Serve {
-            bind,
-            port,
-            allowed,
-            no_confirm,
-            encrypt,
-            service,
-        } => {
+    let result = match cli.command.unwrap_or(Commands::Gui) {
+        Commands::Serve { bind, port, allowed, no_confirm, encrypt, service } => {
             if service {
-                run_as_service()?;
+                run_as_service()
             } else {
-                run_server(bind, port, allowed, !no_confirm, encrypt)?;
+                run_server(bind, port, allowed, !no_confirm, encrypt)
             }
-        }
-        Commands::Connect {
-            server,
-            busid,
-            auto_reconnect,
-            discover,
-        } => {
-            run_client(server, busid, auto_reconnect, discover)?;
-        }
-        Commands::Gui => {
-            run_gui()?;
-        }
-    }
+        },
+        Commands::Connect { server, busid, auto_reconnect, discover } => {
+            run_client(server, busid, auto_reconnect, discover)
+        },
+        Commands::Gui => run_gui(),
+    };
 
-    Ok(())
+    if let Err(e) = result {
+        // Try to extract structured UsbIpError for rich diagnostics
+        if let Some(usbip_err) = e.downcast_ref::<UsbIpError>() {
+            eprintln!(
+                "Fatal: [corr={}] [cat={}] {}",
+                usbip_err.correlation_id(),
+                usbip_err.category(),
+                usbip_err
+            );
+        } else {
+            eprintln!("Fatal: {e}");
+        }
+        std::process::exit(1);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -233,9 +233,8 @@ fn run_client(
             }
         })
     } else {
-        let addr: std::net::SocketAddr = server
-            .parse()
-            .map_err(|_| anyhow::anyhow!("Invalid server address: {server}"))?;
+        let addr: std::net::SocketAddr =
+            server.parse().map_err(|_| anyhow::anyhow!("Invalid server address: {server}"))?;
 
         tracing::info!("Connecting to USB/IP server at {addr}");
 
@@ -285,7 +284,7 @@ fn run_client(
 
 #[cfg(not(feature = "nogui"))]
 fn run_gui() -> anyhow::Result<()> {
-    tracing::info!("Launching USB/IP Passthrough GUI");
+    tracing::info!("Launching AnyPlug GUI");
 
     let rt = tokio::runtime::Runtime::new()?;
     let _rt = rt.enter();
@@ -297,14 +296,10 @@ fn run_gui() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let app = UsbPassthroughApp::default();
+    let app = AnyPlugApp::default();
 
-    eframe::run_native(
-        "USB/IP Passthrough",
-        options,
-        Box::new(|_cc| Ok(Box::new(app))),
-    )
-    .map_err(|e| anyhow::anyhow!("GUI error: {e}"))
+    eframe::run_native("AnyPlug", options, Box::new(|_cc| Ok(Box::new(app))))
+        .map_err(|e| anyhow::anyhow!("GUI error: {e}"))
 }
 
 #[cfg(feature = "nogui")]
@@ -317,7 +312,7 @@ fn run_gui() -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 #[derive(Default)]
-struct UsbPassthroughApp {
+struct AnyPlugApp {
     /// Local USB devices discovered via SetupAPI
     local_devices: Vec<windows_usb::UsbDeviceInfo>,
     /// Error message to display
@@ -328,11 +323,11 @@ struct UsbPassthroughApp {
     server_port: u16,
 }
 
-impl eframe::App for UsbPassthroughApp {
+impl eframe::App for AnyPlugApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // --- Main panel ---
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("USB/IP Passthrough");
+            ui.heading("AnyPlug");
 
             ui.separator();
 
@@ -343,22 +338,20 @@ impl eframe::App for UsbPassthroughApp {
             if self.local_devices.is_empty() {
                 ui.label("(No devices detected — click Refresh)");
             } else {
-                egui::ScrollArea::vertical()
-                    .max_height(200.0)
-                    .show(ui, |ui| {
-                        for dev in &self.local_devices {
-                            ui.horizontal(|ui| {
-                                ui.label(format!(
-                                    "{:04x}:{:04x}  {}",
-                                    dev.vendor_id, dev.product_id, dev.description
-                                ));
-                                if ui.button("Export").clicked() {
-                                    // TODO: trigger server export for this device
-                                    tracing::info!("Export requested for {dev:?}");
-                                }
-                            });
-                        }
-                    });
+                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                    for dev in &self.local_devices {
+                        ui.horizontal(|ui| {
+                            ui.label(format!(
+                                "{:04x}:{:04x}  {}",
+                                dev.vendor_id, dev.product_id, dev.description
+                            ));
+                            if ui.button("Export").clicked() {
+                                // TODO: trigger server export for this device
+                                tracing::info!("Export requested for {dev:?}");
+                            }
+                        });
+                    }
+                });
             }
 
             ui.add_space(8.0);
@@ -400,18 +393,18 @@ impl eframe::App for UsbPassthroughApp {
     }
 }
 
-impl UsbPassthroughApp {
+impl AnyPlugApp {
     fn refresh_devices(&mut self) {
         match windows_usb::enumerate_usb_devices() {
             Ok(devices) => {
                 tracing::info!("Found {} USB device(s)", devices.len());
                 self.local_devices = devices;
                 self.error = None;
-            }
+            },
             Err(e) => {
                 tracing::error!("Failed to enumerate USB devices: {e}");
                 self.error = Some(format!("Enumeration failed: {e}"));
-            }
+            },
         }
     }
 
@@ -441,10 +434,10 @@ impl UsbPassthroughApp {
                         if let Err(e) = server.run().await {
                             tracing::error!("Server error: {e}");
                         }
-                    }
+                    },
                     Err(e) => {
                         tracing::error!("Failed to create server: {e}");
-                    }
+                    },
                 }
             });
         });
@@ -458,10 +451,10 @@ impl UsbPassthroughApp {
 // ---------------------------------------------------------------------------
 
 fn run_as_service() -> anyhow::Result<()> {
-    tracing::info!("Registering USB/IP Passthrough as a Windows service...");
+    tracing::info!("Registering AnyPlug as a Windows service...");
 
-    let service_name = "usbip-passthrough";
-    let service_display_name = "USB/IP Passthrough Service";
+    let service_name = "anyplug-service";
+    let service_display_name = "AnyPlug Service";
     let service_description = "Shares local USB devices over the network via the USB/IP protocol.";
 
     windows_service::service_dispatcher::start(service_name, ffi_service_main)
@@ -481,16 +474,17 @@ fn ffi_service_main(_arguments: Vec<windows_service::service::ServiceMainArgs>) 
         fn main(self, _arguments: Vec<std::ffi::OsString>) {
             let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
 
-            let status_handle = service_control_handler::register("usbip-passthrough", move |control| {
-                match control {
+            let status_handle = service_control_handler::register(
+                "anyplug-service",
+                move |control| match control {
                     ServiceControl::Stop | ServiceControl::Shutdown => {
                         let _ = shutdown_tx.send(());
                         ServiceControlHandlerResult::NoError
-                    }
+                    },
                     ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
                     _ => ServiceControlHandlerResult::NotImplemented,
-                }
-            })
+                },
+            )
             .expect("Failed to register service control handler");
 
             // Report running
@@ -507,7 +501,7 @@ fn ffi_service_main(_arguments: Vec<windows_service::service::ServiceMainArgs>) 
                 })
                 .expect("Failed to set service status");
 
-            tracing::info!("USB/IP Passthrough service is running");
+            tracing::info!("AnyPlug service is running");
 
             // Start the server
             let config = usbip_server::ServerConfig {
@@ -531,7 +525,7 @@ fn ffi_service_main(_arguments: Vec<windows_service::service::ServiceMainArgs>) 
             // Wait for shutdown signal
             let _ = shutdown_rx.recv();
 
-            tracing::info!("Shutting down USB/IP Passthrough service");
+            tracing::info!("Shutting down AnyPlug service");
 
             status_handle
                 .set_service_status(ServiceStatus {
@@ -547,6 +541,6 @@ fn ffi_service_main(_arguments: Vec<windows_service::service::ServiceMainArgs>) 
         }
     }
 
-    service_dispatcher::start("usbip-passthrough", UsbIpService)
+    service_dispatcher::start("anyplug-service", UsbIpService)
         .expect("Failed to start service dispatcher");
 }

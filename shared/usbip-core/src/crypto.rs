@@ -48,7 +48,7 @@ pub const HKDF_SALT_LEN: usize = 32;
 pub const DEFAULT_HKDF_SALT: [u8; HKDF_SALT_LEN] = [0u8; HKDF_SALT_LEN];
 
 /// HKDF info string for domain separation.
-pub const HKDF_INFO: &[u8] = b"usb-passthrough-session-key-v1";
+pub const HKDF_INFO: &[u8] = b"anyplug-session-key-v1";
 
 // ─── Errors ───────────────────────────────────────────────────────
 
