@@ -2,7 +2,7 @@
 
 ## A note for contributors
 
-Welcome. usb-passthrough is a cross-platform USB/IP bridge built on a Rust core
+Welcome. anyplug is a cross-platform USB/IP bridge built on a Rust core
 with Kotlin/Android and a Windows GUI on top. Because it lives where USB hardware,
 gaming rigs, embedded devices, and low-level networking meet, the people who
 show up to contribute tend to come from very different places: gamers chasing

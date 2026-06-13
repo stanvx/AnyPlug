@@ -1,4 +1,4 @@
-# usb-passthrough
+# anyplug
 
 A cross-platform USB/IP bridge that exports a physical USB device on one machine and imports it on another as if it were locally attached. Built around the USB/IP kernel protocol (RFC-compliant, see PROTOCOL.md).
 

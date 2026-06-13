@@ -21,9 +21,9 @@
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="USB Passthrough"
+        android:label="AnyPlug"
         android:supportsRtl="true"
-        android:theme="@style/Theme.UsbPassthrough">
+        android:theme="@style/Theme.AnyPlug">
 
         <!-- Main phone/tablet activity -->
         <activity
@@ -48,7 +48,7 @@
 
         <!-- Foreground service (runs USB/IP in background) -->
         <service
-            android:name=".UsbPassthroughService"
+            android:name=".AnyPlugService"
             android:foregroundServiceType="specialUse"
             android:exported="false" />
 

@@ -351,7 +351,7 @@ Use inline hex comparisons at the caller level:
 Allow the server through the firewall:
 
 ```powershell
-New-NetFirewallRule -DisplayName "USB Passthrough - G920" `
+New-NetFirewallRule -DisplayName "AnyPlug - G920" `
   -Direction Inbound -Protocol TCP -LocalPort 3240 -Action Allow
 ```
 
@@ -384,10 +384,10 @@ When running the server on Android, the G920 must be connected via USB OTG:
 **Important for Android:**
 - The G920 draws up to 500 mA. Some Android devices may not supply enough power via OTG.
 - If the wheel powers on but disconnects under load (force feedback), use a powered USB hub between the phone and the wheel.
-- On Android, `UsbPassthroughService` acquires a partial wake lock to keep the CPU active:
+- On Android, `AnyPlugService` acquires a partial wake lock to keep the CPU active:
   ```kotlin
   val pm = getSystemService(POWER_SERVICE) as PowerManager
-  wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "usb-passthrough:wakelock")
+  wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "anyplug:wakelock")
   ```
 
 ### Client Mode

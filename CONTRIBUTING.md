@@ -1,6 +1,6 @@
-# Contributing to USB/IP Passthrough
+# Contributing to AnyPlug
 
-Thanks for your interest in contributing. USB/IP Passthrough is a cross-platform
+Thanks for your interest in contributing. AnyPlug is a cross-platform
 USB/IP bridge written primarily in Rust, with a Kotlin/Android layer and a
 Windows GUI. It is a hobbyist-friendly project that also takes its engineering
 seriously: we ship to gamers and home users who depend on it for their
@@ -127,8 +127,8 @@ rustup target add aarch64-linux-android
 ### Clone the repo
 
 ```bash
-git clone https://github.com/stanvx/usb-passthrough.git
-cd usb-passthrough
+git clone https://github.com/stanvx/anyplug.git
+cd anyplug
 ```
 
 ## Build and Test

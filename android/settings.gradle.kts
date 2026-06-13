@@ -13,6 +13,6 @@ dependencyResolution {
     }
 }
 
-rootProject.name = "usb-passthrough"
+rootProject.name = "anyplug"
 include(":app")
 include(":tv")

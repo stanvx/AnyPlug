@@ -37,7 +37,7 @@ jobs:
           target: x86_64-pc-windows-msvc
 
       - name: Build windows binary (release)
-        run: cargo build --release -p usb-passthrough
+        run: cargo build --release -p anyplug
         continue-on-error: true
 
       - name: Locate built EXE
@@ -118,7 +118,7 @@ jobs:
       - name: Generate release notes
         id: notes
         run: |
-          echo "## USB/IP Passthrough Release ${{ github.ref_name }}" > _notes.md
+          echo "## AnyPlug Release ${{ github.ref_name }}" > _notes.md
           echo "" >> _notes.md
           echo "### Artifacts" >> _notes.md
           echo "- **Windows EXE** — x86_64 MSVC build" >> _notes.md

@@ -71,7 +71,7 @@ git push origin vX.Y.Z
 ### Post-tag Monitoring
 
 The release workflow builds:
-- **Windows EXE** (windows-latest, MSVC, `cargo build --release -p usb-passthrough`)
+- **Windows EXE** (windows-latest, MSVC, `cargo build --release -p anyplug`)
 - **Android APK** (ubuntu-latest, JDK 17, `gradle assembleRelease`)
 
 Both steps use `continue-on-error: true` — check the Actions run even if it appears green. Verify the artifacts are actually present in the GitHub Release.

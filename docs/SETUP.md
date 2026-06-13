@@ -1,8 +1,8 @@
-# USB/IP Passthrough — Setup Guide
+# AnyPlug — Setup Guide
 
 Complete setup instructions for the USB/IP passthrough system on Linux, Windows, and Android.
 
-> **Project:** USB/IP Passthrough for Logitech G920 (and other USB devices)  
+> **Project:** AnyPlug for Logitech G920 (and other USB devices)  
 > **Protocol:** USB/IP v1.1.1 (`0x0111`) on TCP port 3240  
 > **Default port:** 3240  
 > **mDNS service type:** `_usbip._tcp.local.`
@@ -67,7 +67,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ```bash
 # Download the latest release
-wget https://github.com/stanvx/usb-passthrough/releases/latest/download/usbip-server-x86_64-linux.tar.gz
+wget https://github.com/stanvx/anyplug/releases/latest/download/usbip-server-x86_64-linux.tar.gz
 tar xzf usbip-server-x86_64-linux.tar.gz
 sudo cp usbip-server /usr/local/bin/
 ```
@@ -75,7 +75,7 @@ sudo cp usbip-server /usr/local/bin/
 #### Build from source
 
 ```bash
-cd /home/localadmin/usb-passthrough
+cd /home/localadmin/anyplug
 cargo build --release -p usbip-server
 sudo cp target/release/usbip-server /usr/local/bin/
 ```
@@ -138,7 +138,7 @@ Create `/etc/systemd/system/usbip-server.service`:
 
 ```ini
 [Unit]
-Description=USB/IP Passthrough Server
+Description=AnyPlug Server
 After=network.target
 
 [Service]
@@ -213,7 +213,7 @@ usbip-client --discover
 
 ### Option A: Installer (recommended)
 
-1. Download the latest USB Passthrough installer from the [releases page](https://github.com/stanvx/usb-passthrough/releases).
+1. Download the latest AnyPlug installer from the [releases page](https://github.com/stanvx/anyplug/releases).
 2. Run `USB-Passthrough-Setup.exe`.
 3. Follow the wizard. The installer will:
    - Install the service binary
@@ -224,7 +224,7 @@ usbip-client --discover
 
 ```powershell
 # Download the portable archive
-Invoke-WebRequest -Uri "https://github.com/stanvx/usb-passthrough/releases/latest/download/usbip-server-x86_64-windows.zip" -OutFile usbip-server.zip
+Invoke-WebRequest -Uri "https://github.com/stanvx/anyplug/releases/latest/download/usbip-server-x86_64-windows.zip" -OutFile usbip-server.zip
 Expand-Archive usbip-server.zip
 cd usbip-server
 ```
@@ -282,7 +282,7 @@ Start-Process .\usbip-server.exe -Verb RunAs
 
 ### Using the GUI Client
 
-1. Launch the USB Passthrough client app (`usbip-client-gui.exe`).
+1. Launch the AnyPlug client app (`usbip-client-gui.exe`).
 2. Click **"Discover Servers"** to find servers via mDNS (local network only).
 3. Or enter a server address manually: `192.168.1.100:3240`.
 4. Select a device from the list and click **"Connect"**.
@@ -316,23 +316,23 @@ usbip-client.exe --connect 192.168.1.100:3240 --busid 1-1 --encrypt
 
 ```bash
 # Download the APK from releases
-wget https://github.com/stanvx/usb-passthrough/releases/latest/download/usb-passthrough-app-release.apk
+wget https://github.com/stanvx/anyplug/releases/latest/download/anyplug-app-release.apk
 
 # Install via adb
-adb install usb-passthrough-app-release.apk
+adb install anyplug-app-release.apk
 ```
 
 Or download the Android TV APK:
 
 ```bash
-wget https://github.com/stanvx/usb-passthrough/releases/latest/download/usb-passthrough-tv-release.apk
-adb install usb-passthrough-tv-release.apk
+wget https://github.com/stanvx/anyplug/releases/latest/download/anyplug-tv-release.apk
+adb install anyplug-tv-release.apk
 ```
 
 ### Run as Server
 
 1. Connect the G920 to your Android device via USB OTG.
-2. Open the "USB Passthrough" app.
+2. Open the "AnyPlug" app.
 3. Tap the **Server** tab.
 4. You'll see "Local USB Devices" — tap **"Share"** next to your wheel.
 5. The app starts a foreground service with a persistent notification.
@@ -473,9 +473,9 @@ evtest  # should show the wheel
 |----------|------|
 | Linux (systemd) | `journalctl -u usbip-server` |
 | Linux (manual) | stderr/stdout; set `RUST_LOG=debug` for verbose |
-| Windows (service) | `%PROGRAMDATA%\usb-passthrough\logs\` |
-| Windows (GUI) | `%APPDATA%\usb-passthrough\logs\` |
-| Android | Logcat: `adb logcat -s UsbPassthrough` |
+| Windows (service) | `%PROGRAMDATA%\anyplug\logs\` |
+| Windows (GUI) | `%APPDATA%\anyplug\logs\` |
+| Android | Logcat: `adb logcat -s AnyPlug` |
 
 ---
 

@@ -1,8 +1,8 @@
-# USB/IP Passthrough — Building from Source
+# AnyPlug — Building from Source
 
 Complete guide to compiling the USB/IP passthrough project for all target platforms.
 
-> **Workspace root:** `/home/localadmin/usb-passthrough`  
+> **Workspace root:** `/home/localadmin/anyplug`  
 > **Rust workspace:** `Cargo.toml` with 4 crates (core, server, client, windows)  
 > **Android:** Gradle + rust-android-gradle plugin
 
@@ -119,7 +119,7 @@ java --version
 ## Project Structure
 
 ```
-usb-passthrough/
+anyplug/
 ├── Cargo.toml                    # Workspace root
 ├── shared/
 │   └── usbip-core/              # Core protocol types, crypto, errors
@@ -211,7 +211,7 @@ android (Kotlin)     (Android app)
 ### Build All Crates
 
 ```bash
-cd /home/localadmin/usb-passthrough
+cd /home/localadmin/anyplug
 
 # Build workspace (all crates)
 cargo build --release
@@ -273,7 +273,7 @@ target/release/usbip-windows.exe # Windows egui app
 ### Native Build (x86_64)
 
 ```bash
-cd /home/localadmin/usb-passthrough
+cd /home/localadmin/anyplug
 
 # Build server
 cargo build --release -p usbip-server
@@ -333,7 +333,7 @@ cargo build --release --target armv7-unknown-linux-gnueabihf -p usbip-server
 **On a Windows machine with Rust installed:**
 
 ```powershell
-cd C:\usb-passthrough
+cd C:\anyplug
 
 # Build all Windows components
 cargo build --release -p windows
@@ -385,7 +385,7 @@ rustup target list --installed | grep android  # Should show targets
 ### Quick Build
 
 ```bash
-cd /home/localadmin/usb-passthrough/android
+cd /home/localadmin/anyplug/android
 
 # Build all variants (debug + release)
 ./gradlew assemble
@@ -419,7 +419,7 @@ The plugin automatically:
 
 ### Rust JNI Bridge
 
-The bridge is defined in `android/app/src/main/java/com/usbpassthrough/bridge/RustBridge.kt`:
+The bridge is defined in `android/app/src/main/java/com/anyplug/bridge/RustBridge.kt`:
 
 ```kotlin
 object RustBridge {
@@ -443,8 +443,8 @@ The corresponding Rust side (in `shared/usbip-core/src/lib.rs` or a JNI shim cra
 ### Build Output
 
 ```
-android/app/build/outputs/apk/release/usb-passthrough-app-release.apk    # Phone APK
-android/tv/build/outputs/apk/release/usb-passthrough-tv-release.apk      # TV APK
+android/app/build/outputs/apk/release/anyplug-app-release.apk    # Phone APK
+android/tv/build/outputs/apk/release/anyplug-tv-release.apk      # TV APK
 ```
 
 ### Build Profile
@@ -457,7 +457,7 @@ For development, use debug builds (faster compilation, no optimizations):
 
 Debug APK location:
 ```
-android/app/build/outputs/apk/debug/usb-passthrough-app-debug.apk
+android/app/build/outputs/apk/debug/anyplug-app-debug.apk
 ```
 
 ### Building for Specific ABIs
@@ -480,7 +480,7 @@ By default, the build targets all Android ABIs. To limit scope:
 
 ```bash
 keytool -genkey -v -keystore ~/android-keystore.jks \
-  -alias usb-passthrough -keyalg RSA -keysize 2048 \
+  -alias anyplug -keyalg RSA -keysize 2048 \
   -validity 10000
 
 # You'll be prompted for:
@@ -496,7 +496,7 @@ Create or edit `android/app/signing.properties`:
 ```properties
 storeFile=/home/yourname/android-keystore.jks
 storePassword=your-store-password
-keyAlias=usb-passthrough
+keyAlias=anyplug
 keyPassword=your-key-password
 ```
 
@@ -533,12 +533,12 @@ cd android
 # Sign with apksigner
 $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
   --ks ~/android-keystore.jks \
-  --ks-key-alias usb-passthrough \
-  --out usb-passthrough-signed.apk \
-  app/build/outputs/apk/release/usb-passthrough-app-release-unsigned.apk
+  --ks-key-alias anyplug \
+  --out anyplug-signed.apk \
+  app/build/outputs/apk/release/anyplug-app-release-unsigned.apk
 
 # Verify signature
-$ANDROID_HOME/build-tools/34.0.0/apksigner verify usb-passthrough-signed.apk
+$ANDROID_HOME/build-tools/34.0.0/apksigner verify anyplug-signed.apk
 ```
 
 ---
@@ -560,13 +560,13 @@ choco install nsis
 
 ### Installer Script
 
-The installer script is at `windows/installer/usb-passthrough.nsi`:
+The installer script is at `windows/installer/anyplug.nsi`:
 
 ```nsis
-; usb-passthrough.nsi (partial)
-Name "USB Passthrough"
+; anyplug.nsi (partial)
+Name "AnyPlug"
 OutFile "USB-Passthrough-Setup.exe"
-InstallDir "$PROGRAMFILES64\USB Passthrough"
+InstallDir "$PROGRAMFILES64\AnyPlug"
 
 Section "Server (required)"
   SetOutPath "$INSTDIR"
@@ -578,12 +578,12 @@ Section "Server (required)"
   ExecWait '"$INSTDIR\drivers\dpinst.exe" /sw /sa /path "$INSTDIR\drivers"'
 
   ; Create firewall rule
-  SimpleFC::AddPort 3240 "USB Passthrough" 6 1 "" 1
+  SimpleFC::AddPort 3240 "AnyPlug" 6 1 "" 1
 SectionEnd
 
 Section "Start Menu Shortcuts"
-  CreateShortCut "$SMPROGRAMS\USB Passthrough\USB Passthrough GUI.lnk" "$INSTDIR\usbip-windows.exe"
-  CreateShortCut "$SMPROGRAMS\USB Passthrough\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+  CreateShortCut "$SMPROGRAMS\AnyPlug\AnyPlug GUI.lnk" "$INSTDIR\usbip-windows.exe"
+  CreateShortCut "$SMPROGRAMS\AnyPlug\Uninstall.lnk" "$INSTDIR\uninstall.exe"
 SectionEnd
 ```
 
@@ -591,13 +591,13 @@ SectionEnd
 
 ```powershell
 # 1. First build the Rust binaries (release mode)
-cd C:\usb-passthrough
+cd C:\anyplug
 cargo build --release -p windows
 cargo build --release -p usbip-server
 cargo build --release -p usbip-client
 
 # 2. Run NSIS
-& "C:\Program Files (x86)\NSIS\makensis.exe" windows/installer/usb-passthrough.nsi
+& "C:\Program Files (x86)\NSIS\makensis.exe" windows/installer/anyplug.nsi
 
 # 3. Output: windows/installer/USB-Passthrough-Setup.exe
 ```
@@ -699,8 +699,8 @@ usbip-client-x86_64-linux.tar.gz      # Linux client binary
 usbip-server-x86_64-windows.zip       # Windows server binary
 usbip-client-x86_64-windows.zip       # Windows client binary
 usbip-windows-x86_64-windows.zip      # Windows GUI app + service
-usb-passthrough-app-release.apk       # Android phone APK
-usb-passthrough-tv-release.apk        # Android TV APK
+anyplug-app-release.apk       # Android phone APK
+anyplug-tv-release.apk        # Android TV APK
 USB-Passthrough-Setup.exe             # Windows installer
 ```
 
