@@ -105,12 +105,7 @@ fn bench_pool_acquire_release(iterations: u32, capacity: usize) -> BenchmarkResu
     }
     let total = start.elapsed();
 
-    compute_stats(
-        &mut samples,
-        &format!("pool_acquire_{}_byte", capacity),
-        iterations,
-        total,
-    )
+    compute_stats(&mut samples, &format!("pool_acquire_{}_byte", capacity), iterations, total)
 }
 
 fn bench_batcher_push_flush(iterations: u32) -> BenchmarkResult {
