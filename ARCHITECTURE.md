@@ -34,8 +34,8 @@
  │  └───────┬───────────┘  │           │  └───────┬───────────┘  │
  │          │              │           │          │              │
  │     ┌────┴────┐         │           │     ┌────┴────┐         │
- │     │  G920   │         │           │     │  Driver │         │
- │     │  Wheel  │         │           │     │  (HID/  │         │
+ │     │  USB    │         │           │     │  Driver │         │
+ │     │  Device │         │           │     │  (HID/  │         │
  │     └─────────┘         │           │     │  FFB)   │         │
  └─────────────────────────┘           └─────────────────────────┘
 ```
@@ -192,7 +192,7 @@ Android TV is the same APK with a different UI module. The `tv/` module provides
 │                                       │
 │  4. Connection confirmation           │
 │     └─ UI prompt: "Allow AndroidTV    │
-│        to access G920?"               │
+│        to access USB Device?"          │
 └───────────────────────────────────────┘
 ```
 
@@ -205,7 +205,7 @@ Android TV is the same APK with a different UI module. The `tv/` module provides
 [server]
 bind_address = "0.0.0.0"
 port = 3240
-allowed_devices = ["046d:c261", "046d:c262"]  # G920 VID:PID (empty = allow all)
+allowed_devices = ["1d6b:0104"]  # Linux Foundation HID keyboard (example — any VID:PID works)
 require_confirmation = true
 
 [client]

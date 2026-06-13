@@ -6,7 +6,7 @@ Deep-dive into USB descriptors, endpoints, force feedback, and platform-specific
 > **PID (Xbox variant):** `0xC261`  
 > **PID (PC variant):** `0xC262`  
 > **USB Speed:** Full (12 Mbps)  
-> **G920 detection code:** `windows/src/windows_usb.rs` lines 32-34
+> **G920 detection:** The G920 is detected by VID:PID comparison at the caller level. Constants in `windows_usb.rs` were retired in 2026-06 as part of generalizing the module. Use: `vendor_id == 0x046D && (product_id == 0xC261 || product_id == 0xC262)`
 
 ---
 
@@ -48,9 +48,13 @@ The two firmware variants are detected by PID:
 C261 — Xbox variant: works on Xbox and PC, uses XInput
 C262 — PC variant: native DirectInput, no Xbox compatibility
 
-Windows enumeration (windows_usb.rs):
-  pub const PID_G920_XBOX: u16 = 0xC261;
-  pub const PID_G920_PC: u16 = 0xC262;
+The G920 VID:PID constants were removed from `windows/src/windows_usb.rs` in 2026-06.
+Callers now use inline hex comparisons:
+
+    // Xbox mode:
+    vid == 0x046D && pid == 0xC261
+    // PC mode:
+    vid == 0x046D && pid == 0xC262
 ```
 
 ---
@@ -332,10 +336,14 @@ On Windows, the G920 uses:
 
 The USB/IP server on Windows uses SetupAPI to enumerate devices (see `windows/src/windows_usb.rs`):
 
-```rust
-pub const VID_LOGITECH: u16 = 0x046D;
-pub const PID_G920_XBOX: u16 = 0xC261;
-pub const PID_G920_PC: u16 = 0xC262;
+```text
+The G920 VID:PID constants were removed from `windows/src/windows_usb.rs` in 2026-06.
+Use inline hex comparisons at the caller level:
+
+    // Xbox mode:
+    vid == 0x046D && pid == 0xC261
+    // PC mode:
+    vid == 0x046D && pid == 0xC262
 ```
 
 ### Windows Firewall

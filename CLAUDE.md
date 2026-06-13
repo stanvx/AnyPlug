@@ -13,8 +13,8 @@ The project has strict terminology defined in `CONTEXT.md`:
 - **Server**: machine that exports a physical USB device (libusb/WinUSB/Android USB Host)
 - **Client**: machine that imports and presents it locally (vhci-hcd/VHCI driver)
 - **Device class scope (v1.0)**: HID, mass storage, USB-to-serial, printers, scanners, bulk-only. Isochronous (audio, webcams) is out of scope
-- **G920 debt**: any G920-specific code in `shared/usbip-core/` is a bug — the project supports arbitrary HID, not a specific wheel
-- **Test rig**: Linux raw-gadget + dummy_hcd/udc E2E harness on a self-hosted CI runner
+- **G920 debt**: any G920-specific code in `shared/usbip-core/` is a bug — the project supports arbitrary HID, not a specific wheel. Resolved: all known G920 debt removed as of 2026-06
+- **Test rig**: QEMU-based Linux configfs + dummy_hcd/udc E2E harness running on cloud CI runners (ubuntu-latest). Replaces the earlier self-hosted runner design. See `ci/` directory and `.github/workflows/e2e-linux.yml`
 - **Reliability primitives**: structured errors with correlation IDs, hot-plug detection, auto-reconnect. Session persistence is deferred
 - **Service mode**: headless, survives reboots, no UI after setup (Windows Service / Android foreground service / systemd)
 

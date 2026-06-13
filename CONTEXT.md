@@ -24,8 +24,10 @@ _Avoid_: "Works with anything USB" (too broad — implies isoch support), "any U
 Code in the shared core that encodes assumptions specific to the Logitech G920 racing wheel (VID/PID constants, FFB command bytes, endpoint layouts). The G920 is the original reference device but the project is no longer G920-specific; any G920-shaped code in `shared/usbip-core/` is a bug to be removed, not a feature to be extended.
 _Avoid_: "G920 support" (the project supports arbitrary HID, not a specific wheel), "Logitech quirks" (those are device-profile data, not core logic)
 
+Status: resolved as of 2026-06. The `shared/usbip-core/src/g920.rs` module was deleted in an earlier commit; G920 constants, `is_g920` field, and helper functions in `windows/src/windows_usb.rs` were removed in the architecture deepening pass. No G920-specific code remains in generic infrastructure.
+
 **Test rig**:
-The end-to-end test harness built on Linux's raw-gadget + dummy_hcd/udc. A self-hosted GitHub Actions runner loads the kernel modules, presents a software USB device (e.g. a fake HID keyboard) to the host, and the project's own server + client connect to it over loopback. CI proves the tool works with arbitrary USB devices, not just the G920.
+The end-to-end test harness built on Linux's configfs + dummy_hcd/udc gadget subsystem, booted in QEMU on cloud CI runners (GitHub Actions `ubuntu-latest`). A minimal Linux kernel with USB gadget drivers compiled in presents a software USB device (HID keyboard, mass storage, CDC-ACM) to the host, and the project's own server + client connect to it over loopback. CI proves the tool works with arbitrary USB devices across interrupt, bulk, and control transfer classes.
 _Avoid_: Mock device (too narrow — implies a userspace stub), emulator (ambiguous with VM emulation)
 
 **Reliability primitives**:
