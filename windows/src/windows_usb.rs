@@ -4,8 +4,6 @@
 //! present on the system. Returns structured device information compatible
 //! with the `usbip-core` shared type system (VID, PID, bus path, speed).
 //!
-//! Supported VID/PID ranges:
-//! - Logitech G920 (VID 0x046D, PID 0xC261 / 0xC262)
 
 use std::ffi::OsString;
 use std::mem;
@@ -44,7 +42,7 @@ pub struct UsbDeviceInfo {
     pub hardware_id: String,
     /// USB device speed (0=Unknown, 1=Low, 2=Full, 3=High, 4=Super)
     pub speed: u32,
-    // G920 debt retired: VID/PID detection is caller logic.
+    // Device-specific detection: VID/PID comparison is caller logic.
     // See docs/G920-SPECIFIC.md for the VID:PID values.
 }
 
@@ -68,7 +66,7 @@ impl Default for UsbDeviceInfo {
 /// Enumerate all USB devices present on the system using SetupAPI.
 ///
 /// Returns a vector of [`UsbDeviceInfo`] structs representing every
-/// connected USB device. Callers can filter by VID/PID or G920 status.
+/// connected USB device. Callers can filter by VID/PID as needed.
 pub fn enumerate_usb_devices() -> UsbIpResult<Vec<UsbDeviceInfo>> {
     let mut devices: Vec<UsbDeviceInfo> = Vec::new();
 

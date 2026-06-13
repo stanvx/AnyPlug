@@ -2,7 +2,7 @@
 
 **Pass any USB device over the network between Android, Android TV, and Windows with sub-millisecond latency.**
 
-Built for the Logitech G920 racing wheel. Works with anything USB.
+Cross-platform USB/IP bridge. Pass any USB device over the network — keyboards, gamepads, racing wheels, flash drives, USB-to-serial adapters, and more.
 
 ---
 
@@ -15,12 +15,12 @@ A fast, service-mode USB/IP bridge. Plug a USB device into one machine, use it o
 ```
 ┌─────────────────────┐          ┌──────────────────────┐
 │  Android TV (Client) │          │  Android Phone (Server)│
-│  Xbox Cloud Gaming   │  ◄─────► │  G920 plugged in      │
-│  "sees" G920        │  Wi-Fi   │  USB Host Mode         │
+│  Xbox Cloud / PC Game  │  ◄─────► │  USB Device plugged in │
+│  "sees" remote USB     │  Wi-Fi   │  USB Host Mode         │
 └─────────────────────┘          └──────────────────────┘
 ```
 
-The G920's force feedback, 900° rotation, pedal set — all work.
+The device's native drivers, force feedback, and all features — work exactly as if locally connected.
 
 ---
 
@@ -43,27 +43,27 @@ The G920's force feedback, 900° rotation, pedal set — all work.
 # Install (requires admin)
 winget install USB-Passthrough
 
-# Server (machine with G920)
-usb-passthrough serve --device "Logitech G920"
+# Server (machine with USB device — keyboard, gamepad, flash drive, etc.)
+usb-passthrough serve --device "My Keyboard"
 
 # Client (gaming machine)
-usb-passthrough connect --server 192.168.1.100 --device "Logitech G920"
+usb-passthrough connect --server 192.168.1.100 --device "My Keyboard"
 ```
 
 ### Android Phone → Android TV
 
 ```bash
-# Phone: Install APK, plug in G920 via USB-C hub
+# Phone: Install APK, plug in USB device via USB-C hub
 # TV: Install Android TV APK
 # Both: Open app, devices auto-discover via mDNS
-# Tap G920 on TV → connected
+# Tap USB device on TV → connected
 ```
 
 ---
 
 ## Key Features
 
-- **True USB passthrough**, not HID emulation — force feedback, pedals, shifter all work
+- **True USB passthrough**, not HID emulation — force feedback, gamepad rumble, pedals, all work
 - **USB/IP protocol** — same protocol the Linux kernel uses, battle-tested since 2008
 - **mDNS discovery** — no IP addresses needed, devices find each other automatically
 - **AES-256-GCM encryption** — optional, for traversing untrusted networks
@@ -103,7 +103,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details.
 ## Latency Budget
 
 ```
-G920 URB round-trip on gigabit Ethernet:
+HID URB round-trip on gigabit Ethernet:
 
   App → Kernel (ioctl):        ~10 µs
   Kernel → TCP send:           ~20 µs
@@ -152,7 +152,7 @@ See [docs/BUILDING.md](docs/BUILDING.md) for detailed platform-specific instruct
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Full system design, data flow, thread model |
 | [PROTOCOL.md](PROTOCOL.md) | USB/IP wire protocol reference |
 | [docs/SETUP.md](docs/SETUP.md) | Step-by-step setup per platform |
-| [docs/G920-SPECIFIC.md](docs/G920-SPECIFIC.md) | G920 quirks, force feedback, known issues |
+| [docs/G920-SPECIFIC.md](docs/G920-SPECIFIC.md) | Reference device example — G920 quirks, force feedback, known issues |
 | [docs/ANDROID-TV.md](docs/ANDROID-TV.md) | TV-specific setup, sideloading, remote navigation |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Tuning, buffer sizes, Wi-Fi vs Ethernet |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and fixes |
