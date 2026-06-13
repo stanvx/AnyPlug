@@ -52,7 +52,7 @@ impl VhciBackend for WindowsVhciBackend {
         };
 
         if handle == winapi::um::handleapi::INVALID_HANDLE_VALUE {
-            return Err(UsbIpError::NotSupported(
+            return Err(ErrorKind::NotSupported(
                 r"Cannot open \\.\USBIP-VHCI. Is usbip-win2 driver installed?".into(),
             ));
         }
@@ -83,7 +83,7 @@ impl VhciBackend for WindowsVhciBackend {
         }
 
         if result == 0 {
-            return Err(UsbIpError::NotSupported("VHCI attach IOCTL failed".into()));
+            return Err(ErrorKind::NotSupported("VHCI attach IOCTL failed".into()));
         }
 
         info!("Windows VHCI: attached device at port {}", port);

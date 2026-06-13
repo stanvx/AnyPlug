@@ -34,6 +34,26 @@ _Avoid_: Mock device (too narrow — implies a userspace stub), emulator (ambigu
 The three non-negotiable capabilities for v1.0: structured errors with correlation IDs and exportable logs, hot-plug detection (device attach/detach after server start), and auto-reconnect (survive network flaps and server restarts). Session persistence is explicitly deferred to a later phase.
 _Avoid_: Resilience, fault tolerance, recovery (too vague — the project is specific about *which* failures are handled)
 
+**Ecosystem integration**:
+Packaging and distribution of existing binaries onto community platforms via their native mechanisms. No new code — the server and client already work; integration means making them discoverable and installable on the target platform (RetroPie scriptmodule, Lakka package, Steam Link / Moonlight companion setup).
+_Avoid_: Feature development, new UI, protocol changes (none of these are needed for packaging)
+
+**RetroPie / Lakka integration**:
+The RetroPie or Lakka device runs `usbip-server` to export locally-attached controllers (gamepads, fight sticks, FFB wheels) and `usbip-client` to import remotely-attached devices. Delivered as a RetroPie scriptmodule or Lakka package — no new code, only distribution.
+_Avoid_: "RetroPie support", "Lakka support" (ambiguous — implies new features)
+
+**Steam Link / Moonlight companion**:
+The streaming-client device (Raspberry Pi at the TV running Steam Link or Moonlight) runs `usbip-server` to export locally-attached controllers to the gaming PC. The gaming PC runs `usbip-client` to import them so the game sees them as locally attached. Same architecture, deployment-specific packaging.
+_Avoid_: "Steam integration" (too broad — not a Steam plugin), "Moonlight plugin" (it's a companion service, not a Moonlight fork)
+
+**Client daemon**:
+The client running as a persistent background service that auto-starts on boot, auto-connects to configured servers/devices, and survives login/logout. On Linux: a systemd unit with a local control socket so `usbip-client --status` and `usbip-client --disconnect <device>` talk to the running process. On Windows: a Windows Service (already built). On Android: a foreground service (already built). The client daemon is a v1.0 requirement — without it, ecosystem integrations (RetroPie, Steam Link) collapse because the target device boots headless with no user session.
+_Avoid_: Client service (ambiguous — "service" already means too many things), background mode (too vague)
+
+**Embedded server recipe**:
+A documented procedure for setting up `usbip-server` on a Raspberry Pi or comparable SBC (single-board computer) to create a dedicated USB device exporter. Flash a standard OS image (Raspberry Pi OS), install the binary, configure which devices to export, and enable the systemd unit. The result is a headless USB-over-network appliance — same outcome as VirtualHere CloudHub, achieved with commodity hardware and a stock OS rather than custom firmware. A Buildroot/Yocto firmware image is deferred post-v1.0.
+_Avoid_: CloudHub clone (implies custom firmware — the recipe uses stock OS), embedded firmware (overstates the deliverable)
+
 **Service mode**:
-A headless runtime that survives reboots and requires no UI after initial setup. On Windows: a Windows Service. On Android: a foreground service with a wake lock. On Linux: a systemd unit. The presence of a GUI is a *companion* to service mode, not a replacement for it.
+A headless runtime that survives reboots and requires no UI after initial setup. On Windows: a Windows Service. On Android: a foreground service with a wake lock. On Linux: a systemd unit. Applies to both server and client. The presence of a GUI is a *companion* to service mode, not a replacement for it.
 _Avoid_: Daemon (Unix-specific connotation; the project is cross-platform), background app (ambiguous about lifecycle)

@@ -5,7 +5,7 @@
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use std::net::SocketAddr;
 use std::time::Duration;
-use tracing::{debug, info};
+use tracing::info;
 
 use usbip_core::error::*;
 
@@ -16,7 +16,7 @@ pub struct MdnsBrowser {
 impl MdnsBrowser {
     pub fn new() -> UsbIpResult<Self> {
         let daemon = ServiceDaemon::new()
-            .map_err(|e| UsbIpError::NotSupported(format!("mDNS init failed: {}", e)))?;
+            .map_err(|e| ErrorKind::NotSupported(format!("mDNS init failed: {}", e)))?;
 
         Ok(Self { daemon })
     }
@@ -27,7 +27,7 @@ impl MdnsBrowser {
         let receiver = self
             .daemon
             .browse(service_type)
-            .map_err(|e| UsbIpError::NotSupported(format!("mDNS browse failed: {}", e)))?;
+            .map_err(|e| ErrorKind::NotSupported(format!("mDNS browse failed: {}", e)))?;
 
         let mut servers = Vec::new();
 

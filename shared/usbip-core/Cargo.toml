@@ -13,6 +13,7 @@ crc32fast.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 ring.workspace = true
+uuid = { version = "1", features = ["v7"] }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

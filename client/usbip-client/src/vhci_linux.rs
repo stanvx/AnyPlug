@@ -29,7 +29,7 @@ impl LinuxVhciBackend {
         } else {
             warn!("vhci-hcd kernel module not loaded. Trying to load...");
             if std::process::Command::new("modprobe").arg("vhci-hcd").status().is_err() {
-                return Err(UsbIpError::NotSupported(
+                return Err(ErrorKind::NotSupported(
                     "vhci-hcd kernel module not available. Install with: \
                      sudo modprobe vhci-hcd"
                         .into(),
