@@ -1,0 +1,25 @@
+[package]
+name = "usbip-server"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "USB/IP server — exports USB devices over the network"
+
+[[bin]]
+name = "usbip-server"
+path = "src/main.rs"
+
+[dependencies]
+usbip-core = { path = "../../shared/usbip-core" }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+thiserror = { workspace = true }
+rusb = { workspace = true }
+mdns-sd = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+ring = { workspace = true }
+byteorder = { workspace = true }

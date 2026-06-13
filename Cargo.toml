@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "shared/usbip-core",
+    "server/usbip-server",
+    "client/usbip-client",
+    "windows",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/stanvx/usb-passthrough"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+thiserror = "2"
+byteorder = "1.5"
+zerocopy = "0.8"
+crc32fast = "1.4"
+ring = "0.17"
+rusb = "0.9"
+mdns-sd = "0.11"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+jni = "0.21"
+android_logger = "0.14"
+log = "0.4"
+
+# Cross-platform — used conditionally per-crate with [target.'cfg(windows)'.dependencies]
+windows-service = "0.7"
+winapi = { version = "0.3", features = ["setupapi", "winusb", "ioapiset", "handleapi", "synchapi", "winbase"] }
