@@ -24,8 +24,8 @@ use tracing::{debug, error, info, warn};
 use zerocopy::FromBytes;
 use zerocopy::IntoBytes;
 
-use usbip_core::error::UsbIpError;
 use usbip_core::error::UsbIpResult;
+use usbip_core::error::ErrorKind;
 use usbip_core::protocol::{
     UsbIpDeviceEntry, UsbIpHeader, OP_REP_DEVLIST, OP_REP_IMPORT, OP_REQ_DEVLIST, OP_REQ_IMPORT,
     STATUS_ST_DEV_BUSY, USBIP_CMD_SUBMIT,
@@ -42,7 +42,7 @@ pub struct Server {
     /// USB device manager (libusb context).
     pub usb: Arc<UsbDeviceManager>,
     /// Active exports: busid -> (client_addr, device_info).
-    pub exports: Mutex<HashMap<String, (SocketAddr, UsbIpDeviceEntry)>>,
+    pub exports: Arc<Mutex<HashMap<String, (SocketAddr, UsbIpDeviceEntry)>>>,
     /// mDNS advertiser.
     pub mdns: Option<MdnsAdvertiser>,
     /// Server configuration.
@@ -76,7 +76,7 @@ impl Server {
     pub async fn new(config: ServerConfig) -> UsbIpResult<Self> {
         let usb = UsbDeviceManager::new()?;
         let mdns = MdnsAdvertiser::new(config.port).ok();
-        Ok(Self { usb: Arc::new(usb), exports: Mutex::new(HashMap::new()), mdns, config })
+        Ok(Self { usb: Arc::new(usb), exports: Arc::new(Mutex::new(HashMap::new())), mdns, config })
     }
 
     /// Run the server — listens forever.
@@ -131,29 +131,24 @@ async fn handle_client(
     stream.read_exact(&mut header_buf).await?;
 
     let header = UsbIpHeader::read_from_prefix(&header_buf)
-        .map_err(|_| UsbIpError::Protocol("invalid header".into()))?
+        .map_err(|_| ErrorKind::Protocol("invalid header".into()))?
         .0;
 
     debug!("Received command: 0x{:04x}", header.command.get());
 
     match header.command.get() {
         OP_REQ_DEVLIST => handle_devlist(&mut stream, &usb).await?,
-        OP_REQ_IMPORT => {
-            handle_import(&mut stream, usb.clone(), &exports, peer_addr).await?
-        }
+        OP_REQ_IMPORT => handle_import(&mut stream, usb.clone(), &exports, peer_addr).await?,
         _ => {
             warn!("Unknown command: 0x{:04x}", header.command.get());
-        }
+        },
     }
 
     Ok(())
 }
 
 /// Handle OP_REQ_DEVLIST: return all exportable devices.
-async fn handle_devlist(
-    stream: &mut TcpStream,
-    usb: &UsbDeviceManager,
-) -> UsbIpResult<()> {
+async fn handle_devlist(stream: &mut TcpStream, usb: &UsbDeviceManager) -> UsbIpResult<()> {
     let devices = usb.list_devices();
     let ndev = devices.len() as u32;
 
@@ -191,17 +186,15 @@ async fn handle_import(
     let mut busid_buf = [0u8; 32];
     stream.read_exact(&mut busid_buf).await?;
 
-    let busid = String::from_utf8_lossy(
-        &busid_buf[..busid_buf.iter().position(|&b| b == 0).unwrap_or(32)],
-    )
-    .to_string();
+    let busid =
+        String::from_utf8_lossy(&busid_buf[..busid_buf.iter().position(|&b| b == 0).unwrap_or(32)])
+            .to_string();
 
     info!("Client {} wants to import device: {}", peer_addr, busid);
 
     // Check if device exists
-    let device_entry = usb
-        .get_device_entry(&busid)
-        .ok_or_else(|| UsbIpError::DeviceNotFound(busid.clone()))?;
+    let device_entry =
+        usb.get_device_entry(&busid).ok_or_else(|| ErrorKind::DeviceNotFound(busid.clone()))?;
 
     // Check if already exported
     {
@@ -260,7 +253,7 @@ async fn handle_urb_loop(
                 stream.read_exact(&mut cmd_buf).await?;
 
                 let cmd = UsbIpCmdSubmit::read_from_prefix(&cmd_buf)
-                    .map_err(|_| UsbIpError::Protocol("invalid CMD_SUBMIT".into()))?
+                    .map_err(|_| ErrorKind::Protocol("invalid CMD_SUBMIT".into()))?
                     .0;
 
                 let data_len = cmd.data_len() as usize;
@@ -272,10 +265,10 @@ async fn handle_urb_loop(
                 let result = executor.execute(&cmd, &data);
                 let reply = executor.build_reply(&cmd, &result);
                 stream.write_all(&reply).await?;
-            }
+            },
             _ => {
                 debug!("Unknown command in URB loop: 0x{:04x}", header.command.get());
-            }
+            },
         }
     }
 

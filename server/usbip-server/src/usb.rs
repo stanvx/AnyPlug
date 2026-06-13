@@ -2,15 +2,14 @@
 //!
 //! Handles device enumeration, claiming, URB submission, and hotplug.
 
-use rusb::{Context, Device, DeviceHandle, HotplugBuilder, UsbContext};
+use rusb::{Context, Device, DeviceHandle, UsbContext};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tracing::{debug, warn};
 
-use usbip_core::descriptor::*;
 use usbip_core::error::*;
-use usbip_core::protocol::*;
-use usbip_core::urb::*;
+use usbip_core::protocol::{UsbIpDeviceEntry, U16BE, U32BE};
+use usbip_core::urb::UsbIpCmdSubmit;
 
 /// Manages USB devices for the server.
 pub struct UsbDeviceManager {
@@ -60,7 +59,7 @@ impl UsbDeviceManager {
                 speed: U32BE::new(speed),
                 id_vendor: U16BE::new(desc.vendor_id()),
                 id_product: U16BE::new(desc.product_id()),
-                bcd_device: U16BE::new(desc.device_version().0),
+                bcd_device: U16BE::new(u16::from(desc.device_version().0)),
                 b_device_class: desc.class_code(),
                 b_device_sub_class: desc.sub_class_code(),
                 b_device_protocol: desc.protocol_code(),
@@ -104,10 +103,10 @@ impl UsbDeviceManager {
         let (busnum, devnum) = parse_busid(busid)?;
 
         let device = self.find_device(busnum, devnum)?;
-        let mut handle = device.open()?;
+        let handle = device.open()?;
 
         // Detach kernel driver if active (Linux/Mac)
-        let desc = device.device_descriptor()?;
+        let _desc = device.device_descriptor()?;
         let config = device.config_descriptor(0)?;
 
         for iface_idx in 0..config.num_interfaces() {
@@ -147,16 +146,18 @@ impl UsbDeviceManager {
             let config = device.config_descriptor(config_idx)?;
 
             // Config descriptor (9 bytes, LE)
+            let bm_attributes = if config.self_powered() { 0x40 } else { 0 }
+                | if config.remote_wakeup() { 0x20 } else { 0 };
             let desc_bytes = [
-                config.descriptor().length(),
-                config.descriptor().descriptor_type(),
-                (config.descriptor().w_total_length() & 0xFF) as u8,
-                ((config.descriptor().w_total_length() >> 8) & 0xFF) as u8,
-                config.descriptor().b_num_interfaces(),
-                config.descriptor().b_configuration_value(),
-                config.descriptor().i_configuration(),
-                config.descriptor().bm_attributes(),
-                config.descriptor().b_max_power(),
+                config.length(),
+                config.descriptor_type(),
+                (config.total_length() & 0xFF) as u8,
+                ((config.total_length() >> 8) & 0xFF) as u8,
+                config.num_interfaces(),
+                config.number(),
+                config.description_string_index().unwrap_or(0),
+                bm_attributes,
+                config.max_power() as u8,
             ];
             tree.extend_from_slice(&desc_bytes);
 
@@ -167,18 +168,19 @@ impl UsbDeviceManager {
                         iface_desc.length(),
                         iface_desc.descriptor_type(),
                         iface_desc.interface_number(),
-                        iface_desc.alternate_setting(),
+                        iface_desc.setting_number(),
                         iface_desc.num_endpoints(),
                         iface_desc.class_code(),
                         iface_desc.sub_class_code(),
                         iface_desc.protocol_code(),
-                        iface_desc.interface_string_index(),
+                        iface_desc.description_string_index().unwrap_or(0),
                     ];
                     tree.extend_from_slice(&iface_bytes);
 
                     // HID descriptor (if class is HID)
                     if iface_desc.class_code() == 0x03 {
-                        if let Ok(extra) = iface_desc.extra() {
+                        let extra = iface_desc.extra();
+                        if !extra.is_empty() {
                             tree.extend_from_slice(extra);
                         }
                     }
@@ -212,7 +214,7 @@ impl UsbDeviceManager {
     ) -> UsbIpResult<(i32, u32, Vec<u8>)> {
         let handles = self.handles.lock().unwrap();
         let (handle, _claimed) =
-            handles.get(busid).ok_or_else(|| UsbIpError::DeviceNotFound(busid.into()))?;
+            handles.get(busid).ok_or_else(|| ErrorKind::DeviceNotFound(busid.into()))?;
 
         let ep_addr = cmd.ep_num() as u8;
         let timeout = std::time::Duration::from_millis(5000); // 5s timeout
@@ -270,14 +272,13 @@ impl UsbDeviceManager {
         let mut handles = self.handles.lock().unwrap();
         if let Some((handle, _)) = handles.remove(busid) {
             // Release interfaces
-            if let Ok(device) = handle.device() {
-                if let Ok(config) = device.active_config_descriptor() {
-                    for iface in config.interfaces() {
-                        for desc in iface.descriptors() {
-                            let num = desc.interface_number();
-                            let _ = handle.release_interface(num);
-                            let _ = handle.attach_kernel_driver(num);
-                        }
+            let device = handle.device();
+            if let Ok(config) = device.active_config_descriptor() {
+                for iface in config.interfaces() {
+                    for desc in iface.descriptors() {
+                        let num = desc.interface_number();
+                        let _ = handle.release_interface(num);
+                        let _ = handle.attach_kernel_driver(num);
                     }
                 }
             }
@@ -293,29 +294,31 @@ impl UsbDeviceManager {
                 return Ok(device);
             }
         }
-        Err(UsbIpError::DeviceNotFound(format!("bus {} dev {}", busnum, devnum)))
+        Err(UsbIpError::from(ErrorKind::DeviceNotFound(format!("bus {} dev {}", busnum, devnum))))
     }
 }
 
 fn desc_to_bytes(desc: &rusb::DeviceDescriptor) -> Vec<u8> {
+    let usb_ver = desc.usb_version();
+    let bcd_usb: u16 = (usb_ver.0 as u16) << 8 | usb_ver.1 as u16;
     vec![
         desc.length(),
         desc.descriptor_type(),
-        (desc.usb_version().0 & 0xFF) as u8,
-        ((desc.usb_version().0 >> 8) & 0xFF) as u8,
+        (bcd_usb & 0xFF) as u8,
+        ((bcd_usb >> 8) & 0xFF) as u8,
         desc.class_code(),
         desc.sub_class_code(),
         desc.protocol_code(),
-        desc.max_packet_size_0(),
+        desc.max_packet_size(),
         (desc.vendor_id() & 0xFF) as u8,
         ((desc.vendor_id() >> 8) & 0xFF) as u8,
         (desc.product_id() & 0xFF) as u8,
         ((desc.product_id() >> 8) & 0xFF) as u8,
-        (desc.device_version().0 & 0xFF) as u8,
-        ((desc.device_version().0 >> 8) & 0xFF) as u8,
-        desc.manufacturer_string_index(),
-        desc.product_string_index(),
-        desc.serial_number_string_index(),
+        (u16::from(desc.device_version().0) & 0xFF) as u8,
+        ((u16::from(desc.device_version().0) >> 8) & 0xFF) as u8,
+        desc.manufacturer_string_index().unwrap_or(0),
+        desc.product_string_index().unwrap_or(0),
+        desc.serial_number_string_index().unwrap_or(0),
         desc.num_configurations(),
     ]
 }
@@ -324,9 +327,9 @@ fn desc_to_bytes(desc: &rusb::DeviceDescriptor) -> Vec<u8> {
 fn parse_busid(busid: &str) -> UsbIpResult<(u8, u8)> {
     let parts: Vec<&str> = busid.split('-').collect();
     if parts.len() < 2 {
-        return Err(UsbIpError::DeviceNotFound(busid.into()));
+        return Err(UsbIpError::from(ErrorKind::DeviceNotFound(busid.into())));
     }
-    let busnum: u8 = parts[0].parse().map_err(|_| UsbIpError::DeviceNotFound(busid.into()))?;
-    let devnum: u8 = parts[1].parse().map_err(|_| UsbIpError::DeviceNotFound(busid.into()))?;
+    let busnum: u8 = parts[0].parse().map_err(|_| ErrorKind::DeviceNotFound(busid.into()))?;
+    let devnum: u8 = parts[1].parse().map_err(|_| ErrorKind::DeviceNotFound(busid.into()))?;
     Ok((busnum, devnum))
 }

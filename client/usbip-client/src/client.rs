@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use zerocopy::FromBytes;
 use zerocopy::IntoBytes;
@@ -27,7 +27,6 @@ use usbip_core::descriptor::*;
 use usbip_core::error::*;
 use usbip_core::protocol::*;
 use usbip_core::urb::*;
-use usbip_core::*;
 
 use crate::discovery::MdnsBrowser;
 use crate::vhci::VhciDriver;
@@ -108,11 +107,13 @@ impl Client {
 
         let rep_header = match UsbIpHeader::read_from_prefix(&header_buf) {
             Ok((h, _)) => h,
-            Err(_) => return Err(UsbIpError::Protocol("invalid reply header".into())),
+            Err(_) => {
+                return Err(UsbIpError::from(ErrorKind::Protocol("invalid reply header".into())))
+            },
         };
 
         if rep_header.command.get() != OP_REP_DEVLIST {
-            return Err(UsbIpError::Protocol("unexpected reply".into()));
+            return Err(UsbIpError::from(ErrorKind::Protocol("unexpected reply".into())));
         }
 
         // Read ndev
@@ -163,18 +164,20 @@ impl Client {
 
         let rep_header = match UsbIpHeader::read_from_prefix(&header_buf) {
             Ok((h, _)) => h,
-            Err(_) => return Err(UsbIpError::Protocol("invalid import reply".into())),
+            Err(_) => {
+                return Err(UsbIpError::from(ErrorKind::Protocol("invalid import reply".into())))
+            },
         };
 
         if rep_header.command.get() != OP_REP_IMPORT {
-            return Err(UsbIpError::Protocol("unexpected reply".into()));
+            return Err(UsbIpError::from(ErrorKind::Protocol("unexpected reply".into())));
         }
 
         if rep_header.status.get() != STATUS_SUCCESS {
-            return Err(UsbIpError::DeviceBusy(format!(
+            return Err(UsbIpError::from(ErrorKind::DeviceBusy(format!(
                 "server rejected import (status={})",
                 rep_header.status.get()
-            )));
+            ))));
         }
 
         // Read device entry
@@ -182,7 +185,9 @@ impl Client {
         stream.read_exact(&mut entry_buf).await?;
         let device_entry = match UsbIpDeviceEntry::read_from_prefix(&entry_buf) {
             Ok((entry, _)) => entry,
-            Err(_) => return Err(UsbIpError::Protocol("invalid device entry".into())),
+            Err(_) => {
+                return Err(UsbIpError::from(ErrorKind::Protocol("invalid device entry".into())))
+            },
         };
 
         // Read descriptor tree until fully parsed
@@ -259,8 +264,8 @@ pub struct ImportedDevice {
 async fn urb_forwarding_loop(
     mut stream: TcpStream,
     vhci: Arc<VhciDriver>,
-    busid: String,
-    server_addr: SocketAddr,
+    _busid: String,
+    _server_addr: SocketAddr,
 ) -> UsbIpResult<()> {
     let mut header_buf = [0u8; 8];
     let _seqnum: u32 = 0;
@@ -295,7 +300,11 @@ async fn urb_forwarding_loop(
 
                 let ret = match UsbIpRetSubmit::read_from_prefix(&ret_buf) {
                     Ok((r, _)) => r,
-                    Err(_) => return Err(UsbIpError::Protocol("invalid RET_SUBMIT".into())),
+                    Err(_) => {
+                        return Err(UsbIpError::from(ErrorKind::Protocol(
+                            "invalid RET_SUBMIT".into(),
+                        )))
+                    },
                 };
 
                 // Read data if IN transfer
@@ -322,7 +331,11 @@ async fn urb_forwarding_loop(
 
                 let unlink = match UsbIpRetUnlink::read_from_prefix(&unlink_buf) {
                     Ok((u, _)) => u,
-                    Err(_) => return Err(UsbIpError::Protocol("invalid RET_UNLINK".into())),
+                    Err(_) => {
+                        return Err(UsbIpError::from(ErrorKind::Protocol(
+                            "invalid RET_UNLINK".into(),
+                        )))
+                    },
                 };
 
                 vhci.cancel_urb(unlink.seqnum(), unlink.devid())?;

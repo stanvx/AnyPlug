@@ -141,7 +141,7 @@ not just the original reference hardware. Delivered per PRD #1.
 - [x] G920 debt fully retired — no device-specific constants in generic infrastructure
 - [x] CONTRIBUTING.md fixture capture guide for community descriptor corpus
 
-## Milestone 11: Performance Optimization 📅
+## Milestone 11: Performance Optimization 🔧
 
 - [ ] URB buffer pool sizing auto-tuning
 - [ ] Zero-copy URB forwarding where possible
@@ -149,35 +149,46 @@ not just the original reference hardware. Delivered per PRD #1.
 - [ ] Memory-mapped VHCI ring buffer (Linux)
 - [ ] Adaptive polling interval for Android
 - [ ] TCP buffer auto-tuning guide
-- [ ] Profiling benchmarks published
+- [ ] Profiling benchmarks published with CI perf gate
 
-## Milestone 12: Platform Expansion 📅
+## Milestone 12: Platform Expansion 🔧
 
 - [ ] macOS server (I/O Kit USB enumeration)
-- [ ] macOS client (IOUSBFamily / uinput alternative)
-- [ ] Docker container for server deployment
-- [ ] Web-based management UI
-- [ ] REST API for server status/control
+- [ ] macOS client (DriverKit / IOUSBHostFamily VHCI equivalent)
+- [ ] Multi-arch Docker container (AMD64, ARM64, ARMv7)
+- [ ] Full web-based management UI (React/Next.js SPA)
+- [ ] REST API with WebSocket real-time events
 
-## Milestone 13: Advanced Features 💡
+## Milestone 13: Reliability 🔧
 
-- [ ] Hot-plug support (detect device attach/detach after server start)
+- [ ] Structured errors with correlation IDs (per ADR-0003: must come first)
+- [ ] Hot-plug detection (device attach/detach after server start)
+- [ ] Auto-reconnect (survive network flaps and server restarts)
 - [ ] Multiple simultaneous client connections to different devices
-- [ ] USB isochronous transfer support (audio/video devices)
-- [ ] Bandwidth throttling per client
-- [ ] Session persistence and auto-reconnect
+- [ ] Linux client daemon (systemd unit + local control socket)
 - [ ] End-to-end latency monitoring dashboard
-- [ ] Prometheus metrics endpoint (RUST_LOG structured metrics)
+
+## Milestone 14: Ecosystem 🔧
+
+- [ ] RetroPie / Lakka packaging (scriptmodule / package)
+- [ ] Steam Link / Moonlight companion packaging
+- [ ] Embedded server recipe (Raspberry Pi OS, documented setup)
+
+---
+
+## Post-v1.0
+
+Features explicitly deferred beyond v1.0:
+
+- [ ] USB isochronous transfer support (audio/video devices) — per ADR-0002
+- [ ] Session persistence (resume active import after server crash) — per ADR-0003
 - [ ] USB 3.0 SuperSpeed support (up to 5 Gbps)
 - [ ] IPv6 support
-
-## Milestone 14: Ecosystem 💡
-
+- [ ] Prometheus metrics endpoint
+- [ ] Bandwidth throttling per client
+- [ ] Custom embedded firmware image (Buildroot/Yocto)
 - [ ] Home Assistant add-on
-- [ ] RetroPie / Lakka integration
-- [ ] Steam Link / Moonlight companion
-- [ ] Web frontend for device management
-- [ ] Mobile companion app (iOS?)
+- [ ] Mobile companion app (iOS)
 - [ ] Community plugin: USB/IP to network bridge for VM hosts
 
 ---
@@ -191,7 +202,7 @@ not just the original reference hardware. Delivered per PRD #1.
 | 0.3.0 | — | Android app (phone + TV) |
 | 0.4.0 | — | Documentation complete, CI/CD |
 | 0.5.0 | 2026-06 | Generality test rig, E2E CI, G920 debt retired |
-| 1.0.0 | TBD | Stable release with all milestones 1-13 |
+| 1.0.0 | TBD | Stable release: M1-M14 (reliability, performance, macOS, Docker, web UI, ecosystem) |
 
 ---
 

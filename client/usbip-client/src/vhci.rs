@@ -14,10 +14,12 @@
 //! | Android  | `LinuxVhciBackend`  | vhci-hcd.ko kernel module (root required)|
 //! | macOS    | Not supported       |                                          |
 
-use std::sync::Mutex;
-
 use usbip_core::error::*;
 use usbip_core::protocol::*;
+
+// Mutex is only used by test code but cargo fix strips non-test imports.
+#[allow(unused_imports)]
+use std::sync::Mutex;
 
 // Declare platform-specific backends as child modules.
 #[cfg(target_os = "linux")]
@@ -144,9 +146,9 @@ fn detect_backend() -> UsbIpResult<Box<dyn VhciBackend>> {
 
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        Err(UsbIpError::NotSupported(
+        Err(UsbIpError::from(ErrorKind::NotSupported(
             "VHCI is only supported on Linux and Windows".into(),
-        ))
+        )))
     }
 }
 
@@ -204,10 +206,7 @@ impl VhciBackend for MockVhciBackend {
         actual_length: u32,
         data: &[u8],
     ) -> UsbIpResult<()> {
-        self.urbs
-            .lock()
-            .unwrap()
-            .push((seqnum, devid, status, actual_length, data.to_vec()));
+        self.urbs.lock().unwrap().push((seqnum, devid, status, actual_length, data.to_vec()));
         Ok(())
     }
 
@@ -268,8 +267,8 @@ mod tests {
         let urbs = backend.urbs.lock().unwrap();
         assert_eq!(urbs.len(), 1);
         assert_eq!(urbs[0].0, 42); // seqnum
-        assert_eq!(urbs[0].1, 0);  // devid
-        assert_eq!(urbs[0].3, 4);  // actual_length
+        assert_eq!(urbs[0].1, 0); // devid
+        assert_eq!(urbs[0].3, 4); // actual_length
         assert_eq!(urbs[0].4, data);
     }
 
@@ -298,8 +297,8 @@ mod tests {
     fn test_vhci_driver_new_on_current_platform() {
         let result = VhciDriver::new();
         match result {
-            Ok(_) => {},                            // platform is supported
-            Err(UsbIpError::NotSupported(_)) => {}, // platform is unsupported
+            Ok(_) => {}, // platform is supported
+            Err(ref e) if matches!(e.kind(), ErrorKind::NotSupported(_)) => {}, // platform is unsupported
             Err(e) => panic!("unexpected error: {}", e),
         }
     }
