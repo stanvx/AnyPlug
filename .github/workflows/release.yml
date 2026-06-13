@@ -37,7 +37,7 @@ jobs:
           target: x86_64-pc-windows-msvc
 
       - name: Build windows binary (release)
-        run: cargo build --release -p usbip-windows
+        run: cargo build --release -p usb-passthrough
         continue-on-error: true
 
       - name: Locate built EXE
@@ -77,11 +77,12 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew || true
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
 
       - name: Build release APK
-        run: ./gradlew assembleRelease --no-daemon
+        working-directory: android
+        run: gradle assembleRelease --no-daemon
         continue-on-error: true
 
       - name: Locate APK
