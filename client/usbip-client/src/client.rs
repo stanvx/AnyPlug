@@ -20,17 +20,17 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use usbip_core::protocol::*;
-use usbip_core::urb::*;
+use zerocopy::FromBytes;
+use zerocopy::IntoBytes;
+
 use usbip_core::descriptor::*;
 use usbip_core::error::*;
+use usbip_core::protocol::*;
+use usbip_core::urb::*;
 use usbip_core::*;
 
-use vhci::VhciDriver;
-use discovery::MdnsBrowser;
-
-pub mod vhci;
-pub mod discovery;
+use crate::discovery::MdnsBrowser;
+use crate::vhci::VhciDriver;
 
 /// Client configuration.
 #[derive(Debug, Clone)]
@@ -66,7 +66,7 @@ impl Default for ClientConfig {
 pub struct Client {
     config: ClientConfig,
     vhci: Arc<VhciDriver>,
-    /// Active connections: busid → (stream, device_info).
+    /// Active connections: busid -> (stream, device_info).
     connections: Mutex<Vec<ActiveConnection>>,
 }
 
@@ -79,11 +79,7 @@ struct ActiveConnection {
 impl Client {
     pub fn new(config: ClientConfig) -> UsbIpResult<Self> {
         let vhci = VhciDriver::new()?;
-        Ok(Self {
-            config,
-            vhci: Arc::new(vhci),
-            connections: Mutex::new(Vec::new()),
-        })
+        Ok(Self { config, vhci: Arc::new(vhci), connections: Mutex::new(Vec::new()) })
     }
 
     /// Discover servers via mDNS.
@@ -93,7 +89,10 @@ impl Client {
     }
 
     /// Connect to a server and list its devices.
-    pub async fn list_remote_devices(&self, addr: SocketAddr) -> UsbIpResult<Vec<UsbIpDeviceEntry>> {
+    pub async fn list_remote_devices(
+        &self,
+        addr: SocketAddr,
+    ) -> UsbIpResult<Vec<UsbIpDeviceEntry>> {
         let mut stream = TcpStream::connect(addr).await?;
         if self.config.tcp_nodelay {
             stream.set_nodelay(true)?;
@@ -107,8 +106,10 @@ impl Client {
         let mut header_buf = [0u8; 8];
         stream.read_exact(&mut header_buf).await?;
 
-        let rep_header = UsbIpHeader::read_from_prefix(&header_buf)
-            .ok_or_else(|| UsbIpError::Protocol("invalid reply header".into()))?;
+        let rep_header = match UsbIpHeader::read_from_prefix(&header_buf) {
+            Ok((h, _)) => h,
+            Err(_) => return Err(UsbIpError::Protocol("invalid reply header".into())),
+        };
 
         if rep_header.command.get() != OP_REP_DEVLIST {
             return Err(UsbIpError::Protocol("unexpected reply".into()));
@@ -124,8 +125,8 @@ impl Client {
         for _ in 0..ndev {
             let mut entry_buf = vec![0u8; UsbIpDeviceEntry::SIZE];
             stream.read_exact(&mut entry_buf).await?;
-            if let Some(entry) = UsbIpDeviceEntry::read_from_prefix(&entry_buf) {
-                devices.push(entry.clone());
+            if let Ok((entry, _)) = UsbIpDeviceEntry::read_from_prefix(&entry_buf) {
+                devices.push(entry);
             }
         }
 
@@ -160,8 +161,10 @@ impl Client {
         let mut header_buf = [0u8; 8];
         stream.read_exact(&mut header_buf).await?;
 
-        let rep_header = UsbIpHeader::read_from_prefix(&header_buf)
-            .ok_or_else(|| UsbIpError::Protocol("invalid import reply".into()))?;
+        let rep_header = match UsbIpHeader::read_from_prefix(&header_buf) {
+            Ok((h, _)) => h,
+            Err(_) => return Err(UsbIpError::Protocol("invalid import reply".into())),
+        };
 
         if rep_header.command.get() != OP_REP_IMPORT {
             return Err(UsbIpError::Protocol("unexpected reply".into()));
@@ -177,15 +180,14 @@ impl Client {
         // Read device entry
         let mut entry_buf = vec![0u8; UsbIpDeviceEntry::SIZE];
         stream.read_exact(&mut entry_buf).await?;
-        let device_entry = UsbIpDeviceEntry::read_from_prefix(&entry_buf)
-            .ok_or_else(|| UsbIpError::Protocol("invalid device entry".into()))?
-            .clone();
+        let device_entry = match UsbIpDeviceEntry::read_from_prefix(&entry_buf) {
+            Ok((entry, _)) => entry,
+            Err(_) => return Err(UsbIpError::Protocol("invalid device entry".into())),
+        };
 
-        // Read descriptor tree (rest of the stream, or determined from device info)
-        // We read until we have the full descriptor tree
+        // Read descriptor tree until fully parsed
         let mut descriptors = Vec::new();
-        // Estimate descriptor tree size from USB spec (config wTotalLength)
-        let tree_estimate = 512; // typical + safety margin
+        let tree_estimate = 512;
         let mut desc_buf = vec![0u8; tree_estimate];
         loop {
             match stream.read(&mut desc_buf[descriptors.len()..]).await {
@@ -193,17 +195,16 @@ impl Client {
                 Ok(n) => {
                     let prev_len = descriptors.len();
                     descriptors.extend_from_slice(&desc_buf[prev_len..prev_len + n]);
-                    // Try to parse descriptor tree to see if complete
                     if UsbDeviceInfo::parse_descriptor_tree(&descriptors).is_some() {
                         break;
                     }
-                }
+                },
                 Err(_) => break,
             }
         }
 
         // Create virtual device via VHCI
-        let vhci_device = self.vhci.create_device(&device_entry, &descriptors)?;
+        let _vhci_device = self.vhci.create_device(&device_entry, &descriptors)?;
 
         // Store connection
         {
@@ -224,14 +225,7 @@ impl Client {
         let addr_owned = addr;
 
         tokio::spawn(async move {
-            if let Err(e) = urb_forwarding_loop(
-                stream,
-                vhci,
-                busid_owned,
-                addr_owned,
-            )
-            .await
-            {
+            if let Err(e) = urb_forwarding_loop(stream, vhci, busid_owned, addr_owned).await {
                 error!("URB forwarding error: {}", e);
 
                 // Auto-reconnect
@@ -241,19 +235,16 @@ impl Client {
                             "Reconnecting to {} (attempt {}/{})",
                             addr_owned, attempt, config.reconnect_attempts
                         );
-                        tokio::time::sleep(
-                            std::time::Duration::from_millis(config.reconnect_delay_ms),
-                        )
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            config.reconnect_delay_ms,
+                        ))
                         .await;
                     }
                 }
             }
         });
 
-        Ok(ImportedDevice {
-            busid: busid.to_string(),
-            device_entry,
-        })
+        Ok(ImportedDevice { busid: busid.to_string(), device_entry })
     }
 }
 
@@ -264,7 +255,7 @@ pub struct ImportedDevice {
     pub device_entry: UsbIpDeviceEntry,
 }
 
-/// Main URB forwarding loop — bidirectional proxy between VHCI and server.
+/// Main URB forwarding loop -- bidirectional proxy between VHCI and server.
 async fn urb_forwarding_loop(
     mut stream: TcpStream,
     vhci: Arc<VhciDriver>,
@@ -272,7 +263,7 @@ async fn urb_forwarding_loop(
     server_addr: SocketAddr,
 ) -> UsbIpResult<()> {
     let mut header_buf = [0u8; 8];
-    let mut seqnum: u32 = 0;
+    let _seqnum: u32 = 0;
 
     loop {
         // Read from server
@@ -288,23 +279,24 @@ async fn urb_forwarding_loop(
         }
 
         let header = match UsbIpHeader::read_from_prefix(&header_buf) {
-            Some(h) => h.clone(),
-            None => break,
+            Ok((h, _)) => h,
+            Err(_) => break,
         };
 
         match header.command.get() {
             USBIP_CMD_SUBMIT => {
-                // Server → Client CMD_SUBMIT is unusual but possible
+                // Server -> Client CMD_SUBMIT is unusual but possible
                 // in symmetric USB/IP implementations
-            }
+            },
             USBIP_RET_SUBMIT => {
                 // Read RET_SUBMIT
                 let mut ret_buf = vec![0u8; UsbIpRetSubmit::HEADER_SIZE];
                 stream.read_exact(&mut ret_buf).await?;
 
-                let ret = UsbIpRetSubmit::read_from_prefix(&ret_buf)
-                    .ok_or_else(|| UsbIpError::Protocol("invalid RET_SUBMIT".into()))?
-                    .clone();
+                let ret = match UsbIpRetSubmit::read_from_prefix(&ret_buf) {
+                    Ok((r, _)) => r,
+                    Err(_) => return Err(UsbIpError::Protocol("invalid RET_SUBMIT".into())),
+                };
 
                 // Read data if IN transfer
                 let mut in_data = Vec::new();
@@ -323,20 +315,21 @@ async fn urb_forwarding_loop(
                     ret.actual_len(),
                     &in_data,
                 )?;
-            }
+            },
             USBIP_RET_UNLINK => {
                 let mut unlink_buf = vec![0u8; UsbIpRetUnlink::SIZE];
                 stream.read_exact(&mut unlink_buf).await?;
 
-                let unlink = UsbIpRetUnlink::read_from_prefix(&unlink_buf)
-                    .ok_or_else(|| UsbIpError::Protocol("invalid RET_UNLINK".into()))?
-                    .clone();
+                let unlink = match UsbIpRetUnlink::read_from_prefix(&unlink_buf) {
+                    Ok((u, _)) => u,
+                    Err(_) => return Err(UsbIpError::Protocol("invalid RET_UNLINK".into())),
+                };
 
                 vhci.cancel_urb(unlink.seqnum(), unlink.devid())?;
-            }
+            },
             _ => {
                 warn!("Unknown command in URB loop: 0x{:04x}", header.command.get());
-            }
+            },
         }
     }
 

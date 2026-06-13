@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 usbip-core = { path = "../../shared/usbip-core" }
+zerocopy = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

@@ -1,185 +1,95 @@
 //! Virtual Host Controller Interface (VHCI) driver abstraction.
 //!
 //! This module abstracts the platform-specific mechanism for creating
-//! virtual USB devices that the local OS sees as real hardware.
+//! virtual USB devices that the local OS sees as real hardware. It uses
+//! a trait-based backend pattern: [`VhciDriver`] is the public-facing
+//! wrapper that delegates all operations to a boxed [`VhciBackend`].
 //!
 //! ## Platform Implementations
 //!
-//! | Platform | Mechanism                                |
-//! |----------|------------------------------------------|
-//! | Linux    | vhci-hcd kernel module (/sys/.../vhci)   |
-//! | Windows  | usbip-win2 kernel driver (vhci.sys)       |
-//! | Android  | vhci-hcd.ko kernel module (root required) |
-//! | macOS    | Not currently supported                   |
-//!
-//! ## Linux/Android VHCI
-//!
-//! The vhci-hcd kernel module creates virtual USB host controllers.
-//! Each port on the VHCI can have a device "attached" to it.
-//! The kernel then probes the device, loads drivers, and makes it
-//! available to userspace exactly like a physical device.
+//! | Platform | Backend             | Mechanism                                |
+//! |----------|---------------------|------------------------------------------|
+//! | Linux    | `LinuxVhciBackend`  | vhci-hcd kernel module (/sys/.../vhci)   |
+//! | Windows  | `WindowsVhciBackend`| usbip-win2 kernel driver (vhci.sys)      |
+//! | Android  | `LinuxVhciBackend`  | vhci-hcd.ko kernel module (root required)|
+//! | macOS    | Not supported       |                                          |
 
-use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
+use std::sync::Mutex;
 
-use tracing::{debug, error, info, warn};
-
-use usbip_core::protocol::*;
-use usbip_core::descriptor::*;
 use usbip_core::error::*;
+use usbip_core::protocol::*;
 
-/// VHCI driver abstraction.
-pub struct VhciDriver {
-    /// Platform type.
-    platform: Platform,
-    /// Number of available VHCI ports.
-    num_ports: u32,
-    /// Sysfs path (Linux/Android) or device path (Windows).
-    sysfs_path: Option<PathBuf>,
+// Declare platform-specific backends as child modules.
+#[cfg(target_os = "linux")]
+mod vhci_linux;
+#[cfg(windows)]
+mod vhci_windows;
+
+// ─── VhciBackend Trait ──────────────────────────────────────────
+
+/// Crate-internal trait for platform-specific VHCI operations.
+///
+/// Every method maps to one logical operation in the USB/IP VHCI
+/// protocol. The trait is `Send + Sync` so that [`VhciDriver`] (which
+/// holds a `Box<dyn VhciBackend>`) remains usable across threads.
+pub(crate) trait VhciBackend: Send + Sync {
+    /// Create a virtual USB device from descriptor data.
+    fn create_device(
+        &self,
+        entry: &UsbIpDeviceEntry,
+        descriptors: &[u8],
+    ) -> UsbIpResult<VhciDevice>;
+
+    /// Complete a URB (USBIP_RET_SUBMIT received from server).
+    fn complete_urb(
+        &self,
+        seqnum: u32,
+        devid: u32,
+        status: i32,
+        actual_length: u32,
+        data: &[u8],
+    ) -> UsbIpResult<()>;
+
+    /// Cancel an in-flight URB (USBIP_RET_UNLINK received).
+    fn cancel_urb(&self, seqnum: u32, devid: u32) -> UsbIpResult<()>;
+
+    /// Remove a virtual device by port number.
+    fn remove_device(&self, port: u32) -> UsbIpResult<()>;
+
+    /// Find the first free VHCI port.
+    ///
+    /// Default implementation returns `Ok(0)` — override when the
+    /// platform provides explicit port allocation (e.g. Linux sysfs).
+    fn find_free_port(&self) -> UsbIpResult<u32> {
+        Ok(0)
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Platform {
-    Linux,
-    Windows,
-    Android,
-    Unsupported,
+// ─── VhciDriver (public wrapper) ──────────────────────────────────
+
+/// VHCI driver abstraction.
+///
+/// This is the single public entry-point for VHCI operations. It holds
+/// a heap-allocated, platform-specific backend and delegates all
+/// methods to it.
+pub struct VhciDriver {
+    backend: Box<dyn VhciBackend>,
 }
 
 impl VhciDriver {
-    /// Initialize the VHCI driver.
+    /// Create a new VHCI driver using the platform's native backend.
     pub fn new() -> UsbIpResult<Self> {
-        let platform = detect_platform();
-
-        match platform {
-            Platform::Linux | Platform::Android => {
-                // Check if vhci-hcd is loaded
-                let vhci_path = PathBuf::from("/sys/devices/platform/vhci_hcd.0");
-                let num_ports = if vhci_path.exists() {
-                    // Count available ports
-                    fs::read_dir(vhci_path.join("status"))
-                        .map(|d| d.count() as u32)
-                        .unwrap_or(8)
-                } else {
-                    warn!("vhci-hcd kernel module not loaded. Trying to load...");
-                    // Try modprobe (requires root)
-                    if std::process::Command::new("modprobe")
-                        .arg("vhci-hcd")
-                        .status()
-                        .is_err()
-                    {
-                        return Err(UsbIpError::NotSupported(
-                            "vhci-hcd kernel module not available. Install with: \
-                             sudo modprobe vhci-hcd".into(),
-                        ));
-                    }
-                    // Retry
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    8
-                };
-
-                Ok(Self {
-                    platform,
-                    num_ports,
-                    sysfs_path: Some(vhci_path),
-                })
-            }
-            Platform::Windows => {
-                // Windows: usbip-win2 driver expected
-                // The driver registers a device interface we communicate with via IOCTL
-                let num_ports = 127; // usbip-win2 supports many virtual ports
-                Ok(Self {
-                    platform,
-                    num_ports,
-                    sysfs_path: None,
-                })
-            }
-            Platform::Unsupported => Err(UsbIpError::NotSupported(
-                "VHCI not available on this platform".into(),
-            )),
-        }
+        let backend = detect_backend()?;
+        Ok(Self { backend })
     }
 
     /// Create a virtual USB device from descriptor data.
-    ///
-    /// On Linux: writes to /sys/devices/platform/vhci_hcd.0/attach
-    /// On Windows: IOCTL to usbip-win2 driver
     pub fn create_device(
         &self,
         entry: &UsbIpDeviceEntry,
         descriptors: &[u8],
     ) -> UsbIpResult<VhciDevice> {
-        match self.platform {
-            Platform::Linux | Platform::Android => {
-                // Find a free port
-                let port = self.find_free_port()?;
-
-                // Write attach command to sysfs
-                // Format: "SERVER_IP TCP_PORT BUSID DEV_ID SPEED"
-                let attach_path = self.sysfs_path
-                    .as_ref()
-                    .ok_or_else(|| UsbIpError::NotSupported("no sysfs path".into()))?
-                    .join("attach");
-
-                // Actually, we're the client — the server handles the physical device.
-                // The VHCI attach on the client side creates a virtual device.
-                // In usbip userspace, this is done via usbip_attach_device() which
-                // uses the USBIP_VHCI_ATTACH ioctl or sysfs write.
-
-                let devid = port; // use port as devid
-                let speed = entry.speed_val();
-
-                // Write to attach: port devid speed
-                let attach_str = format!("{} {} {}\n", port, devid, speed);
-                fs::write(&attach_path, attach_str)?;
-
-                info!(
-                    "VHCI: attached device {} at port {} (speed={})",
-                    entry.busid_str(),
-                    port,
-                    speed,
-                );
-
-                Ok(VhciDevice {
-                    port,
-                    devid,
-                    busid: entry.busid_str().to_string(),
-                    vid: entry.vid(),
-                    pid: entry.pid(),
-                })
-            }
-            Platform::Windows => {
-                // Windows: usbip-win2 driver IOCTL
-                #[cfg(windows)]
-                {
-                    let port = self.find_free_port()?;
-                    let devid = port;
-
-                    // Build descriptor block for the driver
-                    let desc_block = build_windows_descriptor_block(entry, descriptors);
-
-                    // IOCTL_USBIP_VHCI_ATTACH to the driver
-                    // (Implementation detail: calls DeviceIoControl on \\\\.\\USBIP-VHCI)
-                    windows_vhci_attach(port, devid, entry.speed_val(), &desc_block)?;
-
-                    Ok(VhciDevice {
-                        port,
-                        devid,
-                        busid: entry.busid_str().to_string(),
-                        vid: entry.vid(),
-                        pid: entry.pid(),
-                    })
-                }
-                #[cfg(not(windows))]
-                {
-                    Err(UsbIpError::NotSupported("Windows VHCI not compiled in".into()))
-                }
-            }
-            Platform::Unsupported => Err(UsbIpError::NotSupported(
-                "VHCI not available".into(),
-            )),
-        }
+        self.backend.create_device(entry, descriptors)
     }
 
     /// Complete a URB (USBIP_RET_SUBMIT received from server).
@@ -191,110 +101,21 @@ impl VhciDriver {
         actual_length: u32,
         data: &[u8],
     ) -> UsbIpResult<()> {
-        // Deliver URB completion to the kernel VHCI driver.
-        // The kernel is waiting for this completion — it will wake the
-        // process that submitted the URB (e.g., the game).
-        //
-        // Linux: write to /sys/.../vhci_hcd.0/portN/urb_complete
-        // Windows: IOCTL_USBIP_VHCI_COMPLETE_URB
-
-        match self.platform {
-            Platform::Linux | Platform::Android => {
-                let port = devid; // devid == port in our implementation
-                let complete_path = self.sysfs_path
-                    .as_ref()
-                    .ok_or_else(|| UsbIpError::NotSupported("no sysfs path".into()))?
-                    .join(format!("port{}/urb_complete", port));
-
-                // Format: seqnum status actual_length [data...]
-                let mut buf = Vec::new();
-                buf.extend_from_slice(&seqnum.to_be_bytes());
-                buf.extend_from_slice(&(status as u32).to_be_bytes());
-                buf.extend_from_slice(&actual_length.to_be_bytes());
-                buf.extend_from_slice(data);
-
-                fs::write(&complete_path, &buf)?;
-                Ok(())
-            }
-            Platform::Windows => {
-                #[cfg(windows)]
-                {
-                    windows_vhci_complete_urb(devid, seqnum, status, actual_length, data)
-                }
-                #[cfg(not(windows))]
-                {
-                    Err(UsbIpError::NotSupported("Windows VHCI not compiled in".into()))
-                }
-            }
-            Platform::Unsupported => Err(UsbIpError::NotSupported(
-                "VHCI not available".into(),
-            )),
-        }
+        self.backend.complete_urb(seqnum, devid, status, actual_length, data)
     }
 
     /// Cancel an in-flight URB (USBIP_RET_UNLINK received).
     pub fn cancel_urb(&self, seqnum: u32, devid: u32) -> UsbIpResult<()> {
-        debug!("VHCI: cancel URB seq={} dev={}", seqnum, devid);
-        // Notify kernel that URB is cancelled
-        // On error (URB not found), just warn — the URB may have already completed
-        match self.platform {
-            Platform::Linux | Platform::Android => {
-                let port = devid;
-                let unlink_path = self.sysfs_path
-                    .as_ref()
-                    .ok_or_else(|| UsbIpError::NotSupported("no sysfs path".into()))?
-                    .join(format!("port{}/urb_unlink", port));
-
-                let buf = seqnum.to_be_bytes();
-                let _ = fs::write(&unlink_path, &buf);
-                Ok(())
-            }
-            _ => Ok(()),
-        }
+        self.backend.cancel_urb(seqnum, devid)
     }
 
     /// Remove a virtual device.
     pub fn remove_device(&self, port: u32) -> UsbIpResult<()> {
-        match self.platform {
-            Platform::Linux | Platform::Android => {
-                let detach_path = self.sysfs_path
-                    .as_ref()
-                    .ok_or_else(|| UsbIpError::NotSupported("no sysfs path".into()))?
-                    .join("detach");
-
-                let detach_str = format!("{}\n", port);
-                fs::write(&detach_path, detach_str)?;
-
-                info!("VHCI: detached device at port {}", port);
-                Ok(())
-            }
-            _ => Ok(()),
-        }
-    }
-
-    fn find_free_port(&self) -> UsbIpResult<u32> {
-        match self.platform {
-            Platform::Linux | Platform::Android => {
-                let status_path = self.sysfs_path
-                    .as_ref()
-                    .ok_or_else(|| UsbIpError::NotSupported("no sysfs path".into()))?
-                    .join("status");
-
-                let status = fs::read_to_string(&status_path).unwrap_or_default();
-                for (port, line) in status.lines().enumerate() {
-                    if line.contains("Port") && !line.contains("Attached") {
-                        return Ok(port as u32);
-                    }
-                }
-                // If no free port found, return first port (may need detach first)
-                warn!("No free VHCI ports found, attempting port 0");
-                Ok(0)
-            }
-            Platform::Windows => Ok(0), // Windows driver handles port allocation
-            _ => Err(UsbIpError::NotSupported("VHCI not available".into())),
-        }
+        self.backend.remove_device(port)
     }
 }
+
+// ─── VhciDevice ─────────────────────────────────────────────────
 
 /// Handle for a virtual USB device created via VHCI.
 #[derive(Debug, Clone)]
@@ -306,119 +127,180 @@ pub struct VhciDevice {
     pub pid: u16,
 }
 
-// ─── Platform Detection ────────────────────────────────────────
+// ─── Backend Factory ────────────────────────────────────────────
 
-fn detect_platform() -> Platform {
-    if cfg!(target_os = "linux") {
-        // Check if running on Android (Bionic libc)
-        if cfg!(target_os = "android") {
-            Platform::Android
-        } else {
-            Platform::Linux
+/// Detect the platform and return the appropriate backend.
+fn detect_backend() -> UsbIpResult<Box<dyn VhciBackend>> {
+    #[cfg(target_os = "linux")]
+    {
+        let inner = vhci_linux::LinuxVhciBackend::new()?;
+        return Ok(Box::new(inner));
+    }
+
+    #[cfg(windows)]
+    {
+        return Ok(Box::new(vhci_windows::WindowsVhciBackend));
+    }
+
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        Err(UsbIpError::NotSupported(
+            "VHCI is only supported on Linux and Windows".into(),
+        ))
+    }
+}
+
+// ─── Mock Backend (testing) ─────────────────────────────────────
+
+#[cfg(test)]
+pub(crate) struct MockVhciBackend {
+    /// Track created devices.
+    devices: Mutex<Vec<VhciDevice>>,
+    /// Track completed URBs.
+    urbs: Mutex<Vec<(u32, u32, i32, u32, Vec<u8>)>>,
+    /// Next port number to assign.
+    next_port: Mutex<u32>,
+}
+
+#[cfg(test)]
+impl MockVhciBackend {
+    pub(crate) fn new() -> Self {
+        Self {
+            devices: Mutex::new(Vec::new()),
+            urbs: Mutex::new(Vec::new()),
+            next_port: Mutex::new(0),
         }
-    } else if cfg!(target_os = "windows") {
-        Platform::Windows
-    } else {
-        Platform::Unsupported
     }
 }
 
-// ─── Windows-Specific VHCI (stubs compiled on non-Windows) ─────
+#[cfg(test)]
+impl VhciBackend for MockVhciBackend {
+    fn create_device(
+        &self,
+        entry: &UsbIpDeviceEntry,
+        _descriptors: &[u8],
+    ) -> UsbIpResult<VhciDevice> {
+        let mut port_guard = self.next_port.lock().unwrap();
+        let port = *port_guard;
+        *port_guard += 1;
 
-#[cfg(windows)]
-fn windows_vhci_attach(
-    port: u32,
-    devid: u32,
-    speed: u32,
-    desc_block: &[u8],
-) -> UsbIpResult<()> {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-    use winapi::um::fileapi::CreateFileW;
-    use winapi::um::handleapi::CloseHandle;
-    use winapi::um::ioapiset::DeviceIoControl;
-    use winapi::um::winnt::{FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE};
-    use winapi::um::winbase::OPEN_EXISTING;
+        let device = VhciDevice {
+            port,
+            devid: port,
+            busid: entry.busid_str().to_string(),
+            vid: entry.vid(),
+            pid: entry.pid(),
+        };
 
-    const IOCTL_USBIP_VHCI_ATTACH: u32 = 0x220004; // CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
-
-    // Build NT device path
-    let device_path: Vec<u16> = OsStr::new("\\\\.\\USBIP-VHCI")
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-
-    let handle = unsafe {
-        CreateFileW(
-            device_path.as_ptr(),
-            GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            std::ptr::null_mut(),
-            OPEN_EXISTING,
-            0,
-            std::ptr::null_mut(),
-        )
-    };
-
-    if handle == winapi::um::handleapi::INVALID_HANDLE_VALUE {
-        return Err(UsbIpError::NotSupported(
-            "Cannot open \\\\.\\USBIP-VHCI. Is usbip-win2 driver installed?".into(),
-        ));
+        self.devices.lock().unwrap().push(device.clone());
+        Ok(device)
     }
 
-    // Build IOCTL input buffer: port, devid, speed, descriptor_block
-    let mut input = Vec::with_capacity(12 + desc_block.len());
-    input.extend_from_slice(&port.to_le_bytes());
-    input.extend_from_slice(&devid.to_le_bytes());
-    input.extend_from_slice(&speed.to_le_bytes());
-    input.extend_from_slice(desc_block);
-
-    let mut bytes_returned: u32 = 0;
-    let result = unsafe {
-        DeviceIoControl(
-            handle,
-            IOCTL_USBIP_VHCI_ATTACH,
-            input.as_ptr() as *mut _,
-            input.len() as u32,
-            std::ptr::null_mut(),
-            0,
-            &mut bytes_returned,
-            std::ptr::null_mut(),
-        )
-    };
-
-    unsafe { CloseHandle(handle); }
-
-    if result == 0 {
-        return Err(UsbIpError::NotSupported("VHCI attach IOCTL failed".into()));
+    fn complete_urb(
+        &self,
+        seqnum: u32,
+        devid: u32,
+        status: i32,
+        actual_length: u32,
+        data: &[u8],
+    ) -> UsbIpResult<()> {
+        self.urbs
+            .lock()
+            .unwrap()
+            .push((seqnum, devid, status, actual_length, data.to_vec()));
+        Ok(())
     }
 
-    info!("Windows VHCI: attached device at port {}", port);
-    Ok(())
+    fn cancel_urb(&self, _seqnum: u32, _devid: u32) -> UsbIpResult<()> {
+        Ok(())
+    }
+
+    fn remove_device(&self, _port: u32) -> UsbIpResult<()> {
+        Ok(())
+    }
+
+    fn find_free_port(&self) -> UsbIpResult<u32> {
+        let port = *self.next_port.lock().unwrap();
+        Ok(port)
+    }
 }
 
-#[cfg(windows)]
-fn windows_vhci_complete_urb(
-    devid: u32,
-    seqnum: u32,
-    status: i32,
-    actual_length: u32,
-    data: &[u8],
-) -> UsbIpResult<()> {
-    // Similar IOCTL structure to attach
-    // IOCTL_USBIP_VHCI_COMPLETE_URB
-    Ok(())
-}
+// ─── Tests ──────────────────────────────────────────────────────
 
-/// Build a Windows-compatible descriptor block from USB descriptors.
-#[cfg(windows)]
-fn build_windows_descriptor_block(
-    _entry: &UsbIpDeviceEntry,
-    descriptors: &[u8],
-) -> Vec<u8> {
-    // Windows expects: total_length (4 bytes) + raw descriptor tree
-    let mut block = Vec::with_capacity(4 + descriptors.len());
-    block.extend_from_slice(&(descriptors.len() as u32).to_le_bytes());
-    block.extend_from_slice(descriptors);
-    block
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create a minimal `UsbIpDeviceEntry` for testing.
+    fn make_dummy_entry(busid: &str, vid: u16, pid: u16) -> UsbIpDeviceEntry {
+        use zerocopy::byteorder::BigEndian;
+        use zerocopy::{FromBytes, FromZeros};
+
+        let mut entry = UsbIpDeviceEntry::new_zeroed();
+        let busid_bytes = busid.as_bytes();
+        let copy_len = busid_bytes.len().min(31);
+        entry.busid[..copy_len].copy_from_slice(&busid_bytes[..copy_len]);
+        entry.id_vendor = zerocopy::byteorder::U16::<BigEndian>::new(vid);
+        entry.id_product = zerocopy::byteorder::U16::<BigEndian>::new(pid);
+        entry
+    }
+
+    #[test]
+    fn test_mock_create_device() {
+        let backend = MockVhciBackend::new();
+        let entry = make_dummy_entry("1-2", 0x1234, 0x5678);
+        let descriptors = vec![0u8; 64];
+
+        let device = backend.create_device(&entry, &descriptors).unwrap();
+        assert_eq!(device.port, 0);
+        assert_eq!(device.vid, 0x1234);
+        assert_eq!(device.pid, 0x5678);
+        assert_eq!(backend.devices.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_mock_complete_urb() {
+        let backend = MockVhciBackend::new();
+        let data = vec![1u8, 2, 3, 4];
+
+        backend.complete_urb(42, 0, 0, 4, &data).unwrap();
+
+        let urbs = backend.urbs.lock().unwrap();
+        assert_eq!(urbs.len(), 1);
+        assert_eq!(urbs[0].0, 42); // seqnum
+        assert_eq!(urbs[0].1, 0);  // devid
+        assert_eq!(urbs[0].3, 4);  // actual_length
+        assert_eq!(urbs[0].4, data);
+    }
+
+    #[test]
+    fn test_mock_sequential_ports() {
+        let backend = MockVhciBackend::new();
+        let entry = make_dummy_entry("1-2", 0x1234, 0x5678);
+        let descriptors = vec![0u8; 64];
+
+        let d0 = backend.create_device(&entry, &descriptors).unwrap();
+        assert_eq!(d0.port, 0);
+
+        let d1 = backend.create_device(&entry, &descriptors).unwrap();
+        assert_eq!(d1.port, 1);
+
+        let d2 = backend.create_device(&entry, &descriptors).unwrap();
+        assert_eq!(d2.port, 2);
+
+        assert_eq!(backend.devices.lock().unwrap().len(), 3);
+
+        // find_free_port should return the next port (3)
+        assert_eq!(backend.find_free_port().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_vhci_driver_new_on_current_platform() {
+        let result = VhciDriver::new();
+        match result {
+            Ok(_) => {},                            // platform is supported
+            Err(UsbIpError::NotSupported(_)) => {}, // platform is unsupported
+            Err(e) => panic!("unexpected error: {}", e),
+        }
+    }
 }
