@@ -21,24 +21,27 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
+use zerocopy::FromBytes;
+use zerocopy::IntoBytes;
 
-use usbip_core::protocol::*;
-use usbip_core::urb::*;
-use usbip_core::descriptor::*;
-use usbip_core::error::*;
-use usbip_core::*;
+use usbip_core::error::UsbIpError;
+use usbip_core::error::UsbIpResult;
+use usbip_core::protocol::{
+    UsbIpDeviceEntry, UsbIpHeader, OP_REP_DEVLIST, OP_REP_IMPORT, OP_REQ_DEVLIST, OP_REQ_IMPORT,
+    STATUS_ST_DEV_BUSY, USBIP_CMD_SUBMIT,
+};
+use usbip_core::urb::UsbIpCmdSubmit;
+use usbip_core::USBIP_PORT;
 
-mod usb;
-mod discovery;
-
-use usb::UsbDeviceManager;
-use discovery::MdnsAdvertiser;
+use crate::discovery::MdnsAdvertiser;
+use crate::urb_executor::UrbExecutor;
+use crate::usb::UsbDeviceManager;
 
 /// Global server state.
 pub struct Server {
     /// USB device manager (libusb context).
     pub usb: Arc<UsbDeviceManager>,
-    /// Active exports: busid → (client_addr, device_info).
+    /// Active exports: busid -> (client_addr, device_info).
     pub exports: Mutex<HashMap<String, (SocketAddr, UsbIpDeviceEntry)>>,
     /// mDNS advertiser.
     pub mdns: Option<MdnsAdvertiser>,
@@ -73,12 +76,7 @@ impl Server {
     pub async fn new(config: ServerConfig) -> UsbIpResult<Self> {
         let usb = UsbDeviceManager::new()?;
         let mdns = MdnsAdvertiser::new(config.port).ok();
-        Ok(Self {
-            usb: Arc::new(usb),
-            exports: Mutex::new(HashMap::new()),
-            mdns,
-            config,
-        })
+        Ok(Self { usb: Arc::new(usb), exports: Mutex::new(HashMap::new()), mdns, config })
     }
 
     /// Run the server — listens forever.
@@ -133,14 +131,16 @@ async fn handle_client(
     stream.read_exact(&mut header_buf).await?;
 
     let header = UsbIpHeader::read_from_prefix(&header_buf)
-        .ok_or_else(|| UsbIpError::Protocol("invalid header".into()))?
-        .clone();
+        .map_err(|_| UsbIpError::Protocol("invalid header".into()))?
+        .0;
 
     debug!("Received command: 0x{:04x}", header.command.get());
 
     match header.command.get() {
         OP_REQ_DEVLIST => handle_devlist(&mut stream, &usb).await?,
-        OP_REQ_IMPORT => handle_import(&mut stream, &usb, &exports, peer_addr).await?,
+        OP_REQ_IMPORT => {
+            handle_import(&mut stream, usb.clone(), &exports, peer_addr).await?
+        }
         _ => {
             warn!("Unknown command: 0x{:04x}", header.command.get());
         }
@@ -183,7 +183,7 @@ async fn handle_devlist(
 /// Handle OP_REQ_IMPORT: client wants to import a specific device.
 async fn handle_import(
     stream: &mut TcpStream,
-    usb: &UsbDeviceManager,
+    usb: Arc<UsbDeviceManager>,
     exports: &Mutex<HashMap<String, (SocketAddr, UsbIpDeviceEntry)>>,
     peer_addr: SocketAddr,
 ) -> UsbIpResult<()> {
@@ -192,13 +192,15 @@ async fn handle_import(
     stream.read_exact(&mut busid_buf).await?;
 
     let busid = String::from_utf8_lossy(
-        &busid_buf[..busid_buf.iter().position(|&b| b == 0).unwrap_or(32)]
-    ).to_string();
+        &busid_buf[..busid_buf.iter().position(|&b| b == 0).unwrap_or(32)],
+    )
+    .to_string();
 
     info!("Client {} wants to import device: {}", peer_addr, busid);
 
     // Check if device exists
-    let device_entry = usb.get_device_entry(&busid)
+    let device_entry = usb
+        .get_device_entry(&busid)
         .ok_or_else(|| UsbIpError::DeviceNotFound(busid.clone()))?;
 
     // Check if already exported
@@ -228,105 +230,48 @@ async fn handle_import(
     stream.write_all(&reply).await?;
 
     // Enter URB forwarding loop
-    handle_urb_loop(stream, usb, exports, busid, peer_addr).await
+    handle_urb_loop(stream, usb.clone(), exports, busid, peer_addr).await
 }
 
 /// Main URB forwarding loop after device import.
 async fn handle_urb_loop(
     stream: &mut TcpStream,
-    usb: &UsbDeviceManager,
+    usb: Arc<UsbDeviceManager>,
     exports: &Mutex<HashMap<String, (SocketAddr, UsbIpDeviceEntry)>>,
     busid: String,
     peer_addr: SocketAddr,
 ) -> UsbIpResult<()> {
+    let executor = UrbExecutor::new(usb.clone(), busid.clone());
     let mut header_buf = [0u8; 8];
-    let mut seqnum: u32 = 0;
 
     loop {
-        // Read header
         if stream.read_exact(&mut header_buf).await.is_err() {
-            break; // client disconnected
+            break;
         }
 
         let header = match UsbIpHeader::read_from_prefix(&header_buf) {
-            Some(h) => h.clone(),
-            None => break,
+            Ok((h, _)) => h,
+            Err(_) => break,
         };
 
         match header.command.get() {
             USBIP_CMD_SUBMIT => {
-                // Read CMD_SUBMIT struct
                 let mut cmd_buf = vec![0u8; UsbIpCmdSubmit::HEADER_SIZE];
                 stream.read_exact(&mut cmd_buf).await?;
 
                 let cmd = UsbIpCmdSubmit::read_from_prefix(&cmd_buf)
-                    .ok_or_else(|| UsbIpError::Protocol("invalid CMD_SUBMIT".into()))?
-                    .clone();
+                    .map_err(|_| UsbIpError::Protocol("invalid CMD_SUBMIT".into()))?
+                    .0;
 
                 let data_len = cmd.data_len() as usize;
-
-                // Read data if OUT transfer
                 let mut data = vec![0u8; data_len];
                 if !cmd.is_in() && data_len > 0 {
                     stream.read_exact(&mut data).await?;
                 }
 
-                // Execute URB on physical device
-                match usb.execute_urb(&busid, &cmd, &data) {
-                    Ok((status, actual_len, in_data)) => {
-                        // Build RET_SUBMIT
-                        let ret = UsbIpRetSubmit {
-                            seqnum:            cmd.seqnum,
-                            devid:             cmd.devid,
-                            direction:         cmd.direction,
-                            ep:                cmd.ep,
-                            status:            U32BE::new(status as u32),
-                            actual_length:     U32BE::new(actual_len),
-                            start_frame:       cmd.start_frame,
-                            number_of_packets: cmd.number_of_packets,
-                            error_count:       U32BE::new(0),
-                            setup:             cmd.setup,
-                        };
-
-                        let mut reply = Vec::new();
-                        let ret_header = UsbIpHeader::new(USBIP_RET_SUBMIT);
-                        reply.extend_from_slice(ret_header.as_bytes());
-                        reply.extend_from_slice(ret.as_bytes());
-                        if !in_data.is_empty() {
-                            reply.extend_from_slice(&in_data);
-                        }
-
-                        stream.write_all(&reply).await?;
-                    }
-                    Err(e) => {
-                        warn!("URB error on {}: {}", busid, e);
-                        let ret = UsbIpRetSubmit {
-                            seqnum:            cmd.seqnum,
-                            devid:             cmd.devid,
-                            direction:         cmd.direction,
-                            ep:                cmd.ep,
-                            status:            U32BE::new(rusb_to_urb_status(
-                                &e.downcast_ref::<rusb::Error>()
-                                    .cloned()
-                                    .unwrap_or(rusb::Error::Other),
-                            ) as u32),
-                            actual_length:     U32BE::new(0),
-                            start_frame:       cmd.start_frame,
-                            number_of_packets: cmd.number_of_packets,
-                            error_count:       U32BE::new(1),
-                            setup:             cmd.setup,
-                        };
-
-                        let mut reply = Vec::new();
-                        let ret_header = UsbIpHeader::new(USBIP_RET_SUBMIT);
-                        reply.extend_from_slice(ret_header.as_bytes());
-                        reply.extend_from_slice(ret.as_bytes());
-
-                        stream.write_all(&reply).await?;
-                    }
-                }
-
-                seqnum = seqnum.wrapping_add(1);
+                let result = executor.execute(&cmd, &data);
+                let reply = executor.build_reply(&cmd, &result);
+                stream.write_all(&reply).await?;
             }
             _ => {
                 debug!("Unknown command in URB loop: 0x{:04x}", header.command.get());
@@ -334,10 +279,8 @@ async fn handle_urb_loop(
         }
     }
 
-    // Cleanup
     usb.release_device(&busid)?;
     exports.lock().await.remove(&busid);
     info!("Client {} disconnected, released {}", peer_addr, busid);
-
     Ok(())
 }

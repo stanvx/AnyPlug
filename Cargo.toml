@@ -31,6 +31,7 @@ toml = "0.8"
 jni = "0.21"
 android_logger = "0.14"
 log = "0.4"
+anyhow = "1"
 
 # Cross-platform — used conditionally per-crate with [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

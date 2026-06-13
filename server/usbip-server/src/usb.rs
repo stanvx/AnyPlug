@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tracing::{debug, warn};
 
-use usbip_core::protocol::*;
-use usbip_core::urb::*;
 use usbip_core::descriptor::*;
 use usbip_core::error::*;
+use usbip_core::protocol::*;
+use usbip_core::urb::*;
 
 /// Manages USB devices for the server.
 pub struct UsbDeviceManager {
@@ -22,10 +22,7 @@ pub struct UsbDeviceManager {
 impl UsbDeviceManager {
     pub fn new() -> UsbIpResult<Self> {
         let context = Context::new()?;
-        Ok(Self {
-            context,
-            handles: Mutex::new(HashMap::new()),
-        })
+        Ok(Self { context, handles: Mutex::new(HashMap::new()) })
     }
 
     /// List all USB devices on the system.
@@ -37,7 +34,7 @@ impl UsbDeviceManager {
             Err(e) => {
                 warn!("Failed to enumerate USB devices: {}", e);
                 return devices;
-            }
+            },
         };
 
         for device in dev_list.iter() {
@@ -56,20 +53,20 @@ impl UsbDeviceManager {
             let path = format!("/sys/bus/usb/devices/{}-{}", busnum, devnum);
 
             let mut entry = UsbIpDeviceEntry {
-                path:                [0u8; 256],
-                busid:               [0u8; 32],
-                busnum:              U32BE::new(busnum.into()),
-                devnum:              U32BE::new(devnum.into()),
-                speed:               U32BE::new(speed),
-                id_vendor:           U16BE::new(desc.vendor_id()),
-                id_product:          U16BE::new(desc.product_id()),
-                bcd_device:          U16BE::new(desc.device_version().0),
-                b_device_class:      desc.class_code(),
-                b_device_sub_class:  desc.sub_class_code(),
-                b_device_protocol:   desc.protocol_code(),
+                path: [0u8; 256],
+                busid: [0u8; 32],
+                busnum: U32BE::new(busnum.into()),
+                devnum: U32BE::new(devnum.into()),
+                speed: U32BE::new(speed),
+                id_vendor: U16BE::new(desc.vendor_id()),
+                id_product: U16BE::new(desc.product_id()),
+                bcd_device: U16BE::new(desc.device_version().0),
+                b_device_class: desc.class_code(),
+                b_device_sub_class: desc.sub_class_code(),
+                b_device_protocol: desc.protocol_code(),
                 b_configuration_value: 0,
                 b_num_configurations: desc.num_configurations(),
-                b_num_interfaces:    0, // filled below
+                b_num_interfaces: 0, // filled below
             };
 
             // Copy strings into fixed arrays
@@ -95,13 +92,7 @@ impl UsbDeviceManager {
 
     /// Get a device entry by busid.
     pub fn get_device_entry(&self, busid: &str) -> Option<UsbIpDeviceEntry> {
-        // Parse busid format: "busnum-devnum"
-        let parts: Vec<&str> = busid.split('-').collect();
-        if parts.len() < 2 {
-            return None;
-        }
-        let busnum: u8 = parts[0].parse().ok()?;
-        let devnum: u8 = parts[1].parse().ok()?;
+        let (busnum, devnum) = parse_busid(busid).ok()?;
 
         self.list_devices()
             .into_iter()
@@ -110,13 +101,7 @@ impl UsbDeviceManager {
 
     /// Claim a device (detach kernel driver, claim interface).
     pub fn claim_device(&self, busid: &str) -> UsbIpResult<()> {
-        let busnum: u8;
-        let devnum: u8;
-        {
-            let parts: Vec<&str> = busid.split('-').collect();
-            busnum = parts[0].parse().map_err(|_| UsbIpError::DeviceNotFound(busid.into()))?;
-            devnum = parts[1].parse().map_err(|_| UsbIpError::DeviceNotFound(busid.into()))?;
-        }
+        let (busnum, devnum) = parse_busid(busid)?;
 
         let device = self.find_device(busnum, devnum)?;
         let mut handle = device.open()?;
@@ -126,7 +111,9 @@ impl UsbDeviceManager {
         let config = device.config_descriptor(0)?;
 
         for iface_idx in 0..config.num_interfaces() {
-            let iface_num = config.interfaces().nth(iface_idx as usize)
+            let iface_num = config
+                .interfaces()
+                .nth(iface_idx as usize)
                 .and_then(|i| i.descriptors().next())
                 .map(|d| d.interface_number());
 
@@ -137,10 +124,7 @@ impl UsbDeviceManager {
             }
         }
 
-        self.handles.lock().unwrap().insert(
-            busid.to_string(),
-            (handle, true),
-        );
+        self.handles.lock().unwrap().insert(busid.to_string(), (handle, true));
 
         debug!("Claimed device: {}", busid);
         Ok(())
@@ -148,13 +132,7 @@ impl UsbDeviceManager {
 
     /// Get the full USB descriptor tree for a device.
     pub fn get_descriptor_tree(&self, busid: &str) -> UsbIpResult<Vec<u8>> {
-        let busnum: u8;
-        let devnum: u8;
-        {
-            let parts: Vec<&str> = busid.split('-').collect();
-            busnum = parts[0].parse().map_err(|_| UsbIpError::DeviceNotFound(busid.into()))?;
-            devnum = parts[1].parse().map_err(|_| UsbIpError::DeviceNotFound(busid.into()))?;
-        }
+        let (busnum, devnum) = parse_busid(busid)?;
 
         let device = self.find_device(busnum, devnum)?;
         let desc = device.device_descriptor()?;
@@ -233,8 +211,8 @@ impl UsbDeviceManager {
         out_data: &[u8],
     ) -> UsbIpResult<(i32, u32, Vec<u8>)> {
         let handles = self.handles.lock().unwrap();
-        let (handle, _claimed) = handles.get(busid)
-            .ok_or_else(|| UsbIpError::DeviceNotFound(busid.into()))?;
+        let (handle, _claimed) =
+            handles.get(busid).ok_or_else(|| UsbIpError::DeviceNotFound(busid.into()))?;
 
         let ep_addr = cmd.ep_num() as u8;
         let timeout = std::time::Duration::from_millis(5000); // 5s timeout
@@ -315,10 +293,7 @@ impl UsbDeviceManager {
                 return Ok(device);
             }
         }
-        Err(UsbIpError::DeviceNotFound(format!(
-            "bus {} dev {}",
-            busnum, devnum
-        )))
+        Err(UsbIpError::DeviceNotFound(format!("bus {} dev {}", busnum, devnum)))
     }
 }
 
@@ -343,4 +318,15 @@ fn desc_to_bytes(desc: &rusb::DeviceDescriptor) -> Vec<u8> {
         desc.serial_number_string_index(),
         desc.num_configurations(),
     ]
+}
+
+/// Parse a busid string ("busnum-devnum") into its numeric components.
+fn parse_busid(busid: &str) -> UsbIpResult<(u8, u8)> {
+    let parts: Vec<&str> = busid.split('-').collect();
+    if parts.len() < 2 {
+        return Err(UsbIpError::DeviceNotFound(busid.into()));
+    }
+    let busnum: u8 = parts[0].parse().map_err(|_| UsbIpError::DeviceNotFound(busid.into()))?;
+    let devnum: u8 = parts[1].parse().map_err(|_| UsbIpError::DeviceNotFound(busid.into()))?;
+    Ok((busnum, devnum))
 }

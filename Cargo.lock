@@ -923,6 +923,7 @@ dependencies = [
 name = "usbip-client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "byteorder",
  "clap",
  "mdns-sd",
@@ -936,6 +937,7 @@ dependencies = [
  "tracing-subscriber",
  "usbip-core",
  "winapi",
+ "zerocopy",
 ]
 
 [[package]]
@@ -970,6 +972,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "usbip-core",
+ "zerocopy",
 ]
 
 [[package]]

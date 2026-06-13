@@ -17,21 +17,13 @@ use winapi::shared::ntdef::HANDLE;
 use winapi::shared::usb::GUID_DEVINTERFACE_USB_DEVICE;
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::setupapi::{
-    SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo,
-    SetupDiGetClassDevsW, SetupDiGetDeviceInstanceIdW, SetupDiGetDeviceRegistryPropertyW,
-    SP_DEVINFO_DATA, SPDRP_DEVICE_DESC, SPDRP_HARDWAREID, DIGCF_PRESENT, DIGCF_DEVICEINTERFACE,
+    SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
+    SetupDiGetDeviceInstanceIdW, SetupDiGetDeviceRegistryPropertyW, DIGCF_DEVICEINTERFACE,
+    DIGCF_PRESENT, SPDRP_DEVICE_DESC, SPDRP_HARDWAREID, SP_DEVINFO_DATA,
 };
 use winapi::um::winbase::INVALID_HANDLE_VALUE;
 
 use usbip_core::error::*;
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-pub const VID_LOGITECH: u16 = 0x046D;
-pub const PID_G920_XBOX: u16 = 0xC261;
-pub const PID_G920_PC: u16 = 0xC262;
 
 // ---------------------------------------------------------------------------
 // Device Info
@@ -52,8 +44,8 @@ pub struct UsbDeviceInfo {
     pub hardware_id: String,
     /// USB device speed (0=Unknown, 1=Low, 2=Full, 3=High, 4=Super)
     pub speed: u32,
-    /// Whether this device is a Logitech G920
-    pub is_g920: bool,
+    // G920 debt retired: VID/PID detection is caller logic.
+    // See docs/G920-SPECIFIC.md for the VID:PID values.
 }
 
 impl Default for UsbDeviceInfo {
@@ -65,7 +57,6 @@ impl Default for UsbDeviceInfo {
             instance_id: String::new(),
             hardware_id: String::new(),
             speed: 0,
-            is_g920: false,
         }
     }
 }
@@ -103,9 +94,8 @@ pub fn enumerate_usb_devices() -> UsbIpResult<Vec<UsbDeviceInfo>> {
         let mut dev_info_data: SP_DEVINFO_DATA = unsafe { mem::zeroed() };
         dev_info_data.cbSize = mem::size_of::<SP_DEVINFO_DATA>() as DWORD;
 
-        let found = unsafe {
-            SetupDiEnumDeviceInfo(dev_info_set, device_index, &mut dev_info_data)
-        };
+        let found =
+            unsafe { SetupDiEnumDeviceInfo(dev_info_set, device_index, &mut dev_info_data) };
 
         if found == FALSE {
             // No more devices
@@ -120,22 +110,20 @@ pub fn enumerate_usb_devices() -> UsbIpResult<Vec<UsbDeviceInfo>> {
         }
 
         // Get the device description
-        if let Ok(desc) = get_device_registry_string(dev_info_set, &dev_info_data, SPDRP_DEVICE_DESC)
+        if let Ok(desc) =
+            get_device_registry_string(dev_info_set, &dev_info_data, SPDRP_DEVICE_DESC)
         {
             info.description = desc;
         }
 
         // Get the hardware ID (contains VID/PID)
-        if let Ok(hw_id) = get_device_registry_string(dev_info_set, &dev_info_data, SPDRP_HARDWAREID)
+        if let Ok(hw_id) =
+            get_device_registry_string(dev_info_set, &dev_info_data, SPDRP_HARDWAREID)
         {
             info.hardware_id = hw_id.clone();
             // Parse VID/PID from hardware ID
             parse_vid_pid_from_hardware_id(&hw_id, &mut info.vendor_id, &mut info.product_id);
         }
-
-        // Detect G920
-        info.is_g920 = info.vendor_id == VID_LOGITECH
-            && (info.product_id == PID_G920_XBOX || info.product_id == PID_G920_PC);
 
         // Skip devices with no VID/PID (root hubs, etc.)
         if info.vendor_id != 0 || info.product_id != 0 {
@@ -187,9 +175,7 @@ fn get_device_instance_id(
     };
 
     if result == FALSE {
-        return Err(UsbIpError::Usb(
-            "SetupDiGetDeviceInstanceIdW failed".to_string(),
-        ));
+        return Err(UsbIpError::Usb("SetupDiGetDeviceInstanceIdW failed".to_string()));
     }
 
     // Find the null terminator and convert
@@ -234,18 +220,13 @@ fn get_device_registry_string(
     };
 
     if result == FALSE {
-        return Err(UsbIpError::Usb(
-            "SetupDiGetDeviceRegistryPropertyW failed".to_string(),
-        ));
+        return Err(UsbIpError::Usb("SetupDiGetDeviceRegistryPropertyW failed".to_string()));
     }
 
     // Registry strings are REG_SZ (null-terminated UTF-16LE)
     if data_type == winapi::um::winnt::REG_SZ {
         let u16_slice = unsafe {
-            std::slice::from_raw_parts(
-                buffer.as_ptr() as *const u16,
-                required_size as usize / 2,
-            )
+            std::slice::from_raw_parts(buffer.as_ptr() as *const u16, required_size as usize / 2)
         };
         let len = u16_slice.iter().position(|&c| c == 0).unwrap_or(u16_slice.len());
         let os_string = OsString::from_wide(&u16_slice[..len]);
@@ -324,20 +305,6 @@ pub fn to_usbip_device_entry(info: &UsbDeviceInfo) -> usbip_core::protocol::UsbI
 }
 
 // ---------------------------------------------------------------------------
-// G920-specific detection helpers
-// ---------------------------------------------------------------------------
-
-/// Check if a device is a Logitech G920 by VID/PID.
-pub fn is_g920_device(vid: u16, pid: u16) -> bool {
-    vid == VID_LOGITECH && (pid == PID_G920_XBOX || pid == PID_G920_PC)
-}
-
-/// Filter a list of devices to only return G920 devices.
-pub fn filter_g920_devices(devices: &[UsbDeviceInfo]) -> Vec<&UsbDeviceInfo> {
-    devices.iter().filter(|d| d.is_g920).collect()
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -374,22 +341,6 @@ mod tests {
         parse_vid_pid_from_hardware_id(hw_id, &mut vid, &mut pid);
         assert_eq!(vid, 0x046D);
         assert_eq!(pid, 0xC261);
-    }
-
-    #[test]
-    fn test_is_g920_xbox() {
-        assert!(is_g920_device(0x046D, 0xC261));
-    }
-
-    #[test]
-    fn test_is_g920_pc() {
-        assert!(is_g920_device(0x046D, 0xC262));
-    }
-
-    #[test]
-    fn test_is_not_g920() {
-        assert!(!is_g920_device(0x046D, 0xC266));
-        assert!(!is_g920_device(0x046D, 0xC26B));
     }
 
     #[test]
