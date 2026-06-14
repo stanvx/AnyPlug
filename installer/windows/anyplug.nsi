@@ -7,6 +7,12 @@
 !define PRODUCT_PUBLISHER "AnyPlug Contributors"
 !define PRODUCT_WEB_SITE "https://github.com/stanvx/AnyPlug"
 
+; Path to the cross-compiled binary, relative to the repo root.
+; Override on the makensis command line with -DREPO_ROOT_OVERRIDE="<path>"
+!ifndef REPO_ROOT_OVERRIDE
+  !define REPO_ROOT_OVERRIDE "..\.."
+!endif
+
 SetCompressor lzma
 
 ; Modern UI
@@ -67,7 +73,7 @@ Section "AnyPlug (required)" SecMain
   SetOutPath "$INSTDIR"
 
   ; Main binary
-  File "target\x86_64-pc-windows-gnu\release\anyplug.exe"
+  File "${REPO_ROOT_OVERRIDE}\target\x86_64-pc-windows-gnu\release\anyplug.exe"
 
   ; Service helper — install/remove scripts
   FileOpen $0 "$INSTDIR\install-service.bat" w
