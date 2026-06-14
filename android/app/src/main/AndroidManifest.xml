@@ -48,7 +48,7 @@
 
         <!-- Foreground service (runs USB/IP in background) -->
         <service
-            android:name=".AnyPlugService"
+            android:name="com.anyplug.common.AnyPlugService"
             android:foregroundServiceType="specialUse"
             android:exported="false" />
 

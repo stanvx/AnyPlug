@@ -1,4 +1,4 @@
-package com.anyplug.bridge
+package com.anyplug.common.bridge
 
 /**
  * JNI bridge to the Rust usbip-android native library.

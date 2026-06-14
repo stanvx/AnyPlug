@@ -53,8 +53,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Grant execute permission for gradlew
-        run: chmod +x gradlew || true
+        run: chmod +x android/gradlew
 
       - name: Run lint (debug)
-        run: ./gradlew lintDebug --no-daemon
-        continue-on-error: true
+        run: cd android && ./gradlew lintDebug --no-daemon --stacktrace

@@ -1,9 +1,9 @@
-package com.anyplug.server
+package com.anyplug.common.server
 
 import android.content.Context
 import android.hardware.usb.*
 import kotlinx.coroutines.*
-import com.anyplug.WakeLockManager
+import com.anyplug.common.WakeLockManager
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.ServerSocket

@@ -1,4 +1,4 @@
-package com.anyplug
+package com.anyplug.common
 
 import android.app.PendingIntent
 import android.app.Service
@@ -8,9 +8,9 @@ import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
-import com.anyplug.client.UsbIpClient
-import com.anyplug.server.UsbIpServer
-import com.anyplug.server.UsbIpServer.UsbDeviceFilter
+import com.anyplug.common.client.UsbIpClient
+import com.anyplug.common.server.UsbIpServer
+import com.anyplug.common.server.UsbIpServer.UsbDeviceFilter
 import kotlinx.coroutines.*
 
 /**
@@ -65,7 +65,11 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
 
-        val notificationIntent = Intent(this, MainActivity::class.java)
+        // Resolve the correct launcher activity for the current app
+        // (MainActivity for phone, TvMainActivity for TV) at runtime
+        val notificationIntent = packageManager.getLaunchIntentForPackage(packageName)
+            ?: Intent()
+
         val pendingIntent = PendingIntent.getActivity(
             this, 0, notificationIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT

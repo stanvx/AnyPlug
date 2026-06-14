@@ -14,8 +14,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import com.anyplug.bridge.RustBridge
-import com.anyplug.ui.*
+import com.anyplug.common.AnyPlugService
+import com.anyplug.common.bridge.RustBridge
+import com.anyplug.common.ui.DiscoveredServer
+import com.anyplug.common.ui.LocalUsbDevice
+import com.anyplug.ui.MainScreen
 
 class MainActivity : ComponentActivity() {
 

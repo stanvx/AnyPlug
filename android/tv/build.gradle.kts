@@ -7,9 +7,7 @@ android {
     namespace = "com.anyplug.tv"
     compileSdk = 34
 
-    // Skip AAPT2 PNG crunching — AAPT2 8.2.0 daemon crashes with
-    // "Unexpected error during link" during PNG processing on CI.
-    aaptOptions {
+    androidResources {
         noCompress += listOf("webp")
     }
 
@@ -19,6 +17,10 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -50,7 +52,7 @@ android {
 }
 
 dependencies {
-    implementation(project(":app"))
+    implementation(project(":common"))
 
     // Compose BOM (shared with app module)
     val composeBom = platform("androidx.compose:compose-bom:2023.10.01")

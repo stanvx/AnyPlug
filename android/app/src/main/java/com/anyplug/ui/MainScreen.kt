@@ -5,6 +5,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.anyplug.common.ui.DiscoveredServer
+import com.anyplug.common.ui.LocalUsbDevice
+import com.anyplug.common.ui.RemoteDevice
 
 /**
  * Main screen for the AnyPlug app.
@@ -185,22 +188,3 @@ fun ClientPanel(
         modifier = Modifier.fillMaxWidth()
     )
 }
-
-data class DiscoveredServer(
-    val host: String,
-    val port: Int,
-    val devices: List<RemoteDevice>
-)
-
-data class RemoteDevice(
-    val name: String,
-    val busId: String,
-    val vid: Int,
-    val pid: Int
-)
-
-data class LocalUsbDevice(
-    val name: String,
-    val vid: Int,
-    val pid: Int
-)

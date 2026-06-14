@@ -14,11 +14,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import com.anyplug.AnyPlugService
-import com.anyplug.bridge.RustBridge
+import com.anyplug.common.AnyPlugService
+import com.anyplug.common.bridge.RustBridge
+import com.anyplug.common.ui.DiscoveredServer
+import com.anyplug.common.ui.LocalUsbDevice
 import com.anyplug.tv.ui.TvLeanbackScreen
-import com.anyplug.ui.DiscoveredServer
-import com.anyplug.ui.LocalUsbDevice
 
 /**
  * Android TV launcher activity with Leanback-optimized UI.

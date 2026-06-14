@@ -1,4 +1,4 @@
-package com.anyplug
+package com.anyplug.common
 
 /**
  * Interface for managing power wake lock during USB/IP URB transfers.

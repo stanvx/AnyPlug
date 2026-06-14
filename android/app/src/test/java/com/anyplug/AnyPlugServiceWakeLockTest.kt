@@ -1,6 +1,7 @@
 package com.anyplug
 
 import android.os.PowerManager
+import com.anyplug.common.AnyPlugService
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith

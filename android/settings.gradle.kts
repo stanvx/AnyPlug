@@ -16,4 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "anyplug"
 include(":app")
+include(":common")
 include(":tv")

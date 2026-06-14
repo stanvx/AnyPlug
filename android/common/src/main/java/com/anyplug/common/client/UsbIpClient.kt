@@ -1,7 +1,7 @@
-package com.anyplug.client
+package com.anyplug.common.client
 
 import kotlinx.coroutines.*
-import com.anyplug.WakeLockManager
+import com.anyplug.common.WakeLockManager
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.Socket

@@ -3,8 +3,9 @@ package com.anyplug.tv.ui
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.anyplug.ui.DiscoveredServer
-import com.anyplug.ui.LocalUsbDevice
+import com.anyplug.common.ui.DiscoveredServer
+import com.anyplug.common.ui.LocalUsbDevice
+import com.anyplug.common.ui.RemoteDevice
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -135,7 +136,7 @@ class TvLeanbackScreenTest {
                 host = "192.168.1.100",
                 port = 3240,
                 devices = listOf(
-                    com.anyplug.ui.RemoteDevice("flash-drive", "1-1", 0x1234, 0x5678)
+                    RemoteDevice("flash-drive", "1-1", 0x1234, 0x5678)
                 )
             )
         )
