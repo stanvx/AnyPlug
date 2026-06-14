@@ -41,24 +41,34 @@ jobs:
           java-version: 17
 
       - name: Set up Android SDK & NDK
-        # Don't redirect output — we need to see NDK install errors
+        # Robust sdkmanager detection — path varies across runner images
         run: |
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install \
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER=$(ls -d "$ANDROID_SDK_ROOT/cmdline-tools/"*/bin/sdkmanager 2>/dev/null | head -1)
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found"
+            exit 1
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | $SDKMANAGER --sdk_root="$ANDROID_SDK_ROOT" --install \
             "platforms;android-${ANDROID_COMPILE_SDK}" \
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "ndk;27.0.12077973"
 
       - name: Verify NDK install
         run: |
-          NDK_PATH="$ANDROID_HOME/ndk/27.0.12077973"
+          NDK_PATH="/usr/local/lib/android/sdk/ndk/27.0.12077973"
           if [ ! -d "$NDK_PATH" ]; then
             echo "::error::NDK not found at $NDK_PATH after sdkmanager install"
-            ls -la "$ANDROID_HOME/ndk/" 2>&1 || true
+            ls -la "/usr/local/lib/android/sdk/ndk/" 2>&1 || true
             exit 1
           fi
           echo "NDK installed at $NDK_PATH"
-          # Write local.properties so AGP can find the NDK on the CI runner
-          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          # Write local.properties so AGP can find the SDK and NDK
+          echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
           echo "ndk.dir=$NDK_PATH" >> android/local.properties
 
       - name: Grant execute permission for gradlew

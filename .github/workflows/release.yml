@@ -114,12 +114,26 @@ jobs:
 
       - name: Install Android SDK components
         run: |
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install \
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
+          # sdkmanager path varies; try latest symlink first, fall back to versioned
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER=$(ls -d "$ANDROID_SDK_ROOT/cmdline-tools/"*/bin/sdkmanager 2>/dev/null | head -1)
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found"
+            exit 1
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | $SDKMANAGER --sdk_root="$ANDROID_SDK_ROOT" --install \
             "platforms;android-${ANDROID_COMPILE_SDK}" \
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "ndk;27.0.12077973"
-          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          echo "ndk.dir=$ANDROID_HOME/ndk/27.0.12077973" >> android/local.properties
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+          echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> android/local.properties
+          # Verify critical paths
+          ls -d "$ANDROID_SDK_ROOT/platforms/android-${ANDROID_COMPILE_SDK}" || echo "::warning::platforms not found"
+          ls -d "$ANDROID_SDK_ROOT/ndk/27.0.12077973" || echo "::warning::NDK not found"
 
       - name: Build phone release APK
         run: |
