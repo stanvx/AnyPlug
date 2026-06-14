@@ -9,8 +9,8 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import com.anyplug.client.UsbIpClient
-import com.anyplug.server.UsbDeviceFilter
 import com.anyplug.server.UsbIpServer
+import com.anyplug.server.UsbIpServer.UsbDeviceFilter
 import kotlinx.coroutines.*
 
 /**
