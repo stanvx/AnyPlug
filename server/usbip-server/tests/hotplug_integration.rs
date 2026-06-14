@@ -69,12 +69,14 @@ fn make_exports(
 }
 
 /// A fake hotplug source that yields a fixed sequence of events.
+#[allow(dead_code)]
 struct FakeHotplugSource {
     events: Vec<Option<HotplugEvent>>,
     index: usize,
 }
 
 impl FakeHotplugSource {
+    #[allow(dead_code)]
     fn new(events: Vec<HotplugEvent>) -> Self {
         Self { events: events.into_iter().map(Some).collect(), index: 0 }
     }
