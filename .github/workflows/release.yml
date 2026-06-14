@@ -189,14 +189,15 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Generate Gradle wrapper
+      - name: Install Android NDK
         run: |
-          cd android
-          gradle wrapper --gradle-version 8.2
-          chmod +x gradlew
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.0.12077973"
+          echo "ndk.dir=$ANDROID_HOME/ndk/27.0.12077973" >> android/local.properties
 
       - name: Build phone release APK
-        run: cd android && ./gradlew :app:assembleRelease --no-daemon
+        run: |
+          chmod +x android/gradlew
+          cd android && ./gradlew :app:assembleRelease --no-daemon
 
       - name: Build TV release APK
         run: cd android && ./gradlew :tv:assembleRelease --no-daemon
@@ -213,7 +214,7 @@ jobs:
         with:
           name: anyplug-android-tv
           path: android/tv/build/outputs/apk/release/tv-release.apk
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ── Publish: create GitHub Release with all artifacts ──────────
   publish:
