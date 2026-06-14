@@ -138,7 +138,8 @@ jobs:
       - name: Build phone release APK
         run: |
           chmod +x android/gradlew
-          cd android && ./gradlew :app:assembleRelease --no-daemon
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          cd android && ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - name: Build TV release APK
         run: cd android && ./gradlew :tv:assembleRelease --no-daemon
