@@ -7,10 +7,9 @@ android {
     namespace = "com.anyplug.tv"
     compileSdk = 34
 
-    // Disable AAPT2 cruncher — AAPT2 8.2.0 daemon crashes with
+    // Skip AAPT2 PNG crunching — AAPT2 8.2.0 daemon crashes with
     // "Unexpected error during link" during PNG processing on CI.
     aaptOptions {
-        cruncherEnabled = false
         noCompress += listOf("webp")
     }
 
