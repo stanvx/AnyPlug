@@ -4,6 +4,7 @@ members = [
     "shared/usbip-core",
     "server/usbip-server",
     "client/usbip-client",
+    "windows",
 ]
 
 # Windows crate excluded on Linux — use `cargo build --workspace`

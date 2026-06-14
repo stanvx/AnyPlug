@@ -31,10 +31,10 @@ jobs:
           toolchain: stable
 
       - name: cargo check (all crates)
-        run: cargo check --workspace
+        run: cargo check --workspace --exclude anyplug
 
       - name: cargo test (all crates)
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude anyplug
 
   # ── Android: Gradle lint ──────────────────────────────────
   android:
