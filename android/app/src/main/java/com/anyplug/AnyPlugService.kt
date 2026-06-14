@@ -99,7 +99,7 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
     /**
      * Start exporting a USB device. The service becomes a USB/IP server.
      */
-    fun startServer(deviceName: String, vid: Int, pid: Int) {
+    fun startServer(@Suppress("UNUSED_PARAMETER") deviceName: String, vid: Int, pid: Int) {
         currentMode = Mode.SERVER
         wakeLock?.acquire()
 
