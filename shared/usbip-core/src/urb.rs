@@ -244,7 +244,7 @@ mod tests {
     }
 
     /// Construct a synthetic UsbIpRetSubmit with caller-specified parameters.
-    fn build_ret_submit(
+    pub(crate) fn build_ret_submit(
         seqnum: u32,
         devid: u32,
         direction: u32,
