@@ -144,10 +144,25 @@ jobs:
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
           echo "ndk.dir=$NDK_PATH" >> android/local.properties
 
+      - name: Decode keystore for release signing
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No keystore secret available — release APK will use debug signing"
+          else
+            echo "$KEYSTORE_BASE64" | base64 -d > android/anyplug.keystore
+            echo "Keystore decoded successfully"
+          fi
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
       - name: Build phone release APK
         env:
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/anyplug.keystore
+          ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
         run: |
           chmod +x android/gradlew
           cd android && ./gradlew :app:assembleRelease --no-daemon --stacktrace
@@ -198,10 +213,25 @@ jobs:
           ls -d "$ANDROID_SDK_ROOT/platforms/android-${ANDROID_COMPILE_SDK}" || echo "::warning::platforms not found"
           ls -d "$ANDROID_SDK_ROOT/ndk/27.0.12077973" || echo "::warning::NDK not found"
 
+      - name: Decode keystore for release signing
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No keystore secret available — TV APK will use debug signing"
+          else
+            echo "$KEYSTORE_BASE64" | base64 -d > android/anyplug.keystore
+            echo "Keystore decoded successfully"
+          fi
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
       - name: Build TV release APK
         env:
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/anyplug.keystore
+          ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
         run: |
           chmod +x android/gradlew
           cd android && ./gradlew :tv:assembleRelease --no-daemon --stacktrace
