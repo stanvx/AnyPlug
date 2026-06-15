@@ -190,13 +190,9 @@ impl Client {
 
             loop {
                 // Run the URB forwarding loop (or the initial one)
-                let result = urb_forwarding_task(
-                    addr_owned,
-                    &busid_owned,
-                    vhci.clone(),
-                    config.tcp_nodelay,
-                )
-                .await;
+                let result =
+                    urb_forwarding_task(addr_owned, &busid_owned, vhci.clone(), config.tcp_nodelay)
+                        .await;
 
                 match result {
                     Ok(()) => {
@@ -242,6 +238,41 @@ impl Client {
 
         Ok(ImportedDevice { busid: busid.to_string(), device_entry })
     }
+
+    /// Single-shot import — connect, import, attach VHCI. No background task.
+    ///
+    /// Unlike [`import_device`], this does NOT spawn a reconnect loop. The caller
+    /// is responsible for managing reconnection (the daemon uses this so it can
+    /// await the URB forwarding loop directly).
+    pub async fn import_device_once(
+        &self,
+        addr: SocketAddr,
+        busid: &str,
+    ) -> UsbIpResult<ImportedDevice> {
+        let (device_entry, descriptors) =
+            do_import(addr, busid, &self.vhci, self.config.tcp_nodelay).await?;
+
+        {
+            let mut conns = self.connections.lock().await;
+            conns.push(ActiveConnection {
+                busid: busid.to_string(),
+                device_entry: device_entry.clone(),
+                descriptors,
+            });
+        }
+
+        Ok(ImportedDevice { busid: busid.to_string(), device_entry })
+    }
+
+    /// Run the URB forwarding loop for a previously-imported device.
+    ///
+    /// Opens a fresh TCP connection, re-imports, and enters the URB forwarding
+    /// loop.  Returns `Ok(())` on clean shutdown or `Err` on disconnect/error.
+    /// Callers (like the daemon) `tokio::select!` on this to detect drops
+    /// without polling.
+    pub async fn run_urb_forwarding(&self, addr: SocketAddr, busid: &str) -> UsbIpResult<()> {
+        urb_forwarding_task(addr, busid, self.vhci.clone(), self.config.tcp_nodelay).await
+    }
 }
 
 /// Handle for an imported device.
@@ -281,9 +312,7 @@ async fn do_import(
 
     let rep_header = match UsbIpHeader::read_from_prefix(&header_buf) {
         Ok((h, _)) => h,
-        Err(_) => {
-            return Err(UsbIpError::from(ErrorKind::Protocol("invalid import reply".into())))
-        },
+        Err(_) => return Err(UsbIpError::from(ErrorKind::Protocol("invalid import reply".into()))),
     };
 
     if rep_header.command.get() != OP_REP_IMPORT {
@@ -302,9 +331,7 @@ async fn do_import(
     stream.read_exact(&mut entry_buf).await?;
     let device_entry = match UsbIpDeviceEntry::read_from_prefix(&entry_buf) {
         Ok((entry, _)) => entry,
-        Err(_) => {
-            return Err(UsbIpError::from(ErrorKind::Protocol("invalid device entry".into())))
-        },
+        Err(_) => return Err(UsbIpError::from(ErrorKind::Protocol("invalid device entry".into()))),
     };
 
     // Read descriptor tree until fully parsed
@@ -379,9 +406,7 @@ async fn tcp_connect_and_import(
 
     let rep_header = match UsbIpHeader::read_from_prefix(&header_buf) {
         Ok((h, _)) => h,
-        Err(_) => {
-            return Err(UsbIpError::from(ErrorKind::Protocol("invalid import reply".into())))
-        },
+        Err(_) => return Err(UsbIpError::from(ErrorKind::Protocol("invalid import reply".into()))),
     };
 
     if rep_header.command.get() != OP_REP_IMPORT {
@@ -412,10 +437,7 @@ async fn tcp_connect_and_import(
 }
 
 /// Main URB forwarding loop — bidirectional proxy between VHCI and server.
-async fn urb_forwarding_loop(
-    stream: &mut TcpStream,
-    vhci: &VhciDriver,
-) -> UsbIpResult<()> {
+async fn urb_forwarding_loop(stream: &mut TcpStream, vhci: &VhciDriver) -> UsbIpResult<()> {
     let mut header_buf = [0u8; 8];
 
     loop {

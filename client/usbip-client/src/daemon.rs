@@ -35,6 +35,7 @@ use tracing::{error, info, warn};
 use usbip_core::error::*;
 
 use crate::client::{Client, ClientConfig};
+use crate::reconnect::{decide_reconnect, ReconnectConfig, ReconnectDecision, ReconnectState};
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -80,10 +81,7 @@ fn default_run_dir() -> PathBuf {
 
 impl Default for DaemonConfig {
     fn default() -> Self {
-        Self {
-            socket_path: default_socket_path(),
-            connections: Vec::new(),
-        }
+        Self { socket_path: default_socket_path(), connections: Vec::new() }
     }
 }
 
@@ -95,8 +93,7 @@ impl DaemonConfig {
             info!("No config file at {}, using defaults", path.display());
             return Ok(Self::default());
         }
-        let content =
-            fs::read_to_string(path).map_err(ErrorKind::Io)?;
+        let content = fs::read_to_string(path).map_err(ErrorKind::Io)?;
         let config: Self = toml::from_str(&content)
             .map_err(|e| ErrorKind::InvalidMessage(format!("bad config: {}", e)))?;
         Ok(config)
@@ -125,14 +122,9 @@ impl DaemonConfig {
 #[serde(tag = "command", content = "args")]
 pub enum DaemonCommand {
     /// Connect to a server and import a device.
-    Connect {
-        server: SocketAddr,
-        busid: String,
-    },
+    Connect { server: SocketAddr, busid: String },
     /// Disconnect an imported device.
-    Disconnect {
-        busid: String,
-    },
+    Disconnect { busid: String },
     /// Query daemon status (connected devices, etc.).
     Status,
     /// Gracefully shut down the daemon.
@@ -206,24 +198,18 @@ impl DaemonManager {
     pub async fn run(&self) -> UsbIpResult<()> {
         // Ensure socket directory exists
         if let Some(parent) = self.config.socket_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(ErrorKind::Io)?;
+            fs::create_dir_all(parent).map_err(ErrorKind::Io)?;
         }
 
         // Remove stale socket file if present
         if self.config.socket_path.exists() {
-            fs::remove_file(&self.config.socket_path)
-                .map_err(ErrorKind::Io)?;
+            fs::remove_file(&self.config.socket_path).map_err(ErrorKind::Io)?;
         }
 
         // Start Unix socket listener
-        let listener = UnixListener::bind(&self.config.socket_path)
-            .map_err(ErrorKind::Io)?;
+        let listener = UnixListener::bind(&self.config.socket_path).map_err(ErrorKind::Io)?;
 
-        info!(
-            "Daemon listening on {}",
-            self.config.socket_path.display()
-        );
+        info!("Daemon listening on {}", self.config.socket_path.display());
 
         // Start auto-connect for configured devices
         for conn_cfg in &self.config.connections {
@@ -279,14 +265,7 @@ impl DaemonManager {
         }
 
         tokio::spawn(async move {
-            auto_connect_loop(
-                cfg,
-                client,
-                connections,
-                cancel_token,
-                shutdown_token,
-            )
-            .await;
+            auto_connect_loop(cfg, client, connections, cancel_token, shutdown_token).await;
         });
     }
 
@@ -307,33 +286,35 @@ async fn auto_connect_loop(
     cancel_token: tokio_util::sync::CancellationToken,
     shutdown_token: tokio_util::sync::CancellationToken,
 ) {
-loop {
-    // Check for shutdown or cancel
+    let reconf = ReconnectConfig::default();
+    let mut state = ReconnectState::Active;
+
+    loop {
+        // Check for cancellation before each attempt.
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 info!("Auto-connect cancelled for {} ({})", config.server, config.busid);
                 return;
             }
-            _ = shutdown_token.cancelled() => {
-                return;
-            }
+            _ = shutdown_token.cancelled() => return,
             _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
         }
 
         // Update state to Connecting
         {
             let mut conns = connections.lock().await;
-            if let Some(mc) = conns.iter_mut().find(|c| c.config.busid == config.busid && c.config.server == config.server) {
+            if let Some(mc) = conns
+                .iter_mut()
+                .find(|c| c.config.busid == config.busid && c.config.server == config.server)
+            {
                 mc.state = ConnectionState::Connecting;
             }
         }
 
-        info!(
-            "Connecting to {} (busid={})...",
-            config.server, config.busid
-        );
+        info!("Connecting to {} (busid={})...", config.server, config.busid);
 
-        match client.import_device(config.server, &config.busid).await {
+        // Single-shot import — no background reconnect task.
+        match client.import_device_once(config.server, &config.busid).await {
             Ok(device) => {
                 info!(
                     "Connected to {} (busid={}, device={:04x}:{:04x})",
@@ -346,71 +327,74 @@ loop {
                 // Update state to Connected
                 {
                     let mut conns = connections.lock().await;
-                    if let Some(mc) = conns.iter_mut().find(|c| c.config.busid == config.busid && c.config.server == config.server) {
+                    if let Some(mc) = conns.iter_mut().find(|c| {
+                        c.config.busid == config.busid && c.config.server == config.server
+                    }) {
                         mc.state = ConnectionState::Connected;
                     }
                 }
 
-                // Wait for disconnect/cancel/shutdown signal
-                tokio::select! {
+                // Await the URB forwarding loop directly.
+                // Returns on disconnect — no polling needed.
+                let result = tokio::select! {
                     _ = cancel_token.cancelled() => {
                         info!("Disconnecting {} ({})", config.server, config.busid);
                         return;
                     }
-                    _ = shutdown_token.cancelled() => {
+                    _ = shutdown_token.cancelled() => return,
+                    res = client.run_urb_forwarding(config.server, &config.busid) => res,
+                };
+
+                match result {
+                    Ok(()) => {
+                        info!(
+                            "URB forwarding ended cleanly for {} ({})",
+                            config.server, config.busid
+                        );
                         return;
-                    }
-                    // If we get here, the connection dropped (client.import_device spawns
-                    // the URB forwarding task which returns on disconnect).
-                    // We detect this by polling the cancellation token.
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
-                        // Check if connection still alive by looking at state
-                        let still_connected = {
-                            let conns = connections.lock().await;
-                            conns.iter()
-                                .any(|c| c.config.busid == config.busid
-                                     && c.config.server == config.server
-                                     && c.state == ConnectionState::Connected)
-                        };
-                        if !still_connected {
-                            // Connection was explicitly disconnected
-                            return;
-                        }
-                        // Connection dropped — reconnect with backoff
-                        warn!("Connection to {} ({}) dropped, reconnecting...", config.server, config.busid);
-                    }
+                    },
+                    Err(ref e) => {
+                        warn!("Connection to {} ({}) dropped: {}", config.server, config.busid, e);
+                        // Fall through to reconnect logic below.
+                    },
                 }
-            }
+            },
             Err(e) => {
-                error!(
-                    "Failed to connect to {} (busid={}): {}",
-                    config.server, config.busid, e
-                );
+                error!("Failed to connect to {} (busid={}): {}", config.server, config.busid, e);
+            },
+        }
 
-                // Update state to Error
-                {
-                    let mut conns = connections.lock().await;
-                    if let Some(mc) = conns.iter_mut().find(|c| c.config.busid == config.busid && c.config.server == config.server) {
-                        mc.state = ConnectionState::Error(format!("{}", e));
-                    }
-                }
-
-                // Exponential backoff: 1s, 2s, 4s, 8s, 16s capped
-                let delay = std::time::Duration::from_secs(1);
-                tokio::select! {
-                    _ = cancel_token.cancelled() => {
-                        return;
-                    }
-                    _ = shutdown_token.cancelled() => {
-                        return;
-                    }
-                    _ = tokio::time::sleep(delay) => {
-                        // Backoff complete, retry
-                    }
-                }
-                info!("Retrying connection to {} (busid={})...", config.server, config.busid);
+        // Update state to Error
+        {
+            let mut conns = connections.lock().await;
+            if let Some(mc) = conns
+                .iter_mut()
+                .find(|c| c.config.busid == config.busid && c.config.server == config.server)
+            {
+                mc.state = ConnectionState::Error("connection lost, retrying".to_string());
             }
         }
+
+        // Use ReconnectConfig for proper exponential backoff.
+        let delay = match decide_reconnect(
+            &Err(UsbIpError::from(ErrorKind::ConnectionClosed)),
+            &mut state,
+            &reconf,
+        ) {
+            ReconnectDecision::RetryAfter(d) => d,
+            ReconnectDecision::Stop => {
+                warn!("Retry limit exhausted for {} ({}) — stopping", config.server, config.busid);
+                return;
+            },
+        };
+
+        tokio::select! {
+            _ = cancel_token.cancelled() => return,
+            _ = shutdown_token.cancelled() => return,
+            _ = tokio::time::sleep(delay) => {},
+        }
+
+        info!("Retrying connection to {} (busid={})...", config.server, config.busid);
     }
 }
 
@@ -430,10 +414,7 @@ async fn handle_connection(
     // Read one line per request (JSON per line)
     loop {
         line.clear();
-        let bytes_read = buf_reader
-            .read_line(&mut line)
-            .await
-            .map_err(ErrorKind::Io)?;
+        let bytes_read = buf_reader.read_line(&mut line).await.map_err(ErrorKind::Io)?;
 
         if bytes_read == 0 {
             break; // client disconnected
@@ -506,10 +487,7 @@ async fn handle_command(
                     let client_clone = client.clone();
                     let connections_clone = connections.clone();
                     let shutdown_token_clone = shutdown_token.clone();
-                    let cfg = ConnectionConfig {
-                        server,
-                        busid: busid.clone(),
-                    };
+                    let cfg = ConnectionConfig { server, busid: busid.clone() };
 
                     {
                         let mut conns = connections.lock().await;
@@ -542,14 +520,14 @@ async fn handle_command(
                         )),
                         connections: None,
                     }
-                }
+                },
                 Err(e) => DaemonResponse {
                     status: "error".to_string(),
                     message: Some(format!("import failed: {}", e)),
                     connections: None,
                 },
             }
-        }
+        },
 
         DaemonCommand::Disconnect { busid } => {
             let mut conns = connections.lock().await;
@@ -569,7 +547,7 @@ async fn handle_command(
                     connections: None,
                 }
             }
-        }
+        },
 
         DaemonCommand::Status => {
             let conns = connections.lock().await;
@@ -596,7 +574,7 @@ async fn handle_command(
                 message: None,
                 connections: Some(status_list),
             }
-        }
+        },
 
         DaemonCommand::Shutdown => {
             info!("Shutdown requested via Unix socket");
@@ -606,7 +584,7 @@ async fn handle_command(
                 message: Some("shutting down".to_string()),
                 connections: None,
             }
-        }
+        },
     }
 }
 
@@ -618,9 +596,7 @@ pub async fn send_daemon_command(
     socket_path: &Path,
     cmd: &DaemonCommand,
 ) -> UsbIpResult<DaemonResponse> {
-    let mut stream = UnixStream::connect(socket_path)
-        .await
-        .map_err(ErrorKind::Io)?;
+    let mut stream = UnixStream::connect(socket_path).await.map_err(ErrorKind::Io)?;
 
     let cmd_json = serde_json::to_string(cmd)
         .map_err(|e| ErrorKind::Serialization(format!("serialization error: {}", e)))?;
@@ -632,12 +608,9 @@ pub async fn send_daemon_command(
     // Read response (one line)
     let mut buf = String::new();
     let mut reader = BufReader::new(&mut stream);
-    reader
-        .read_line(&mut buf)
-        .await
-        .map_err(ErrorKind::Io)?;
+    reader.read_line(&mut buf).await.map_err(ErrorKind::Io)?;
 
-        let response: DaemonResponse= serde_json::from_str(buf.trim())
+    let response: DaemonResponse = serde_json::from_str(buf.trim())
         .map_err(|e| ErrorKind::InvalidMessage(format!("invalid response: {}", e)))?;
 
     Ok(response)

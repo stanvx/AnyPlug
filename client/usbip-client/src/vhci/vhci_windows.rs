@@ -53,7 +53,8 @@ impl VhciBackend for WindowsVhciBackend {
         if handle == winapi::um::handleapi::INVALID_HANDLE_VALUE {
             return Err(ErrorKind::NotSupported(
                 r"Cannot open \\.\USBIP-VHCI. Is usbip-win2 driver installed?".into(),
-            ).into());
+            )
+            .into());
         }
 
         // Build IOCTL input buffer: port, devid, speed, descriptor_block

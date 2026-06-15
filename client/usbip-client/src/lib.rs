@@ -7,5 +7,5 @@ pub mod reconnect;
 pub mod vhci;
 
 pub use client::{Client, ClientConfig};
-pub use reconnect::{ReconnectConfig, ReconnectState};
+pub use reconnect::{decide_reconnect, ReconnectConfig, ReconnectDecision, ReconnectState};
 pub use vhci::VhciDriver;

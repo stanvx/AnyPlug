@@ -258,7 +258,10 @@ mod tests {
         let config = ReconnectConfig::default();
         // After enough attempts, delay should be at the cap (30s) with ±25% jitter
         let d_high = config.delay_for_attempt(10).as_secs_f64();
-        assert!(d_high <= 37.5, "high attempt delay ({d_high}s) should be at most 30s + 25% jitter");
+        assert!(
+            d_high <= 37.5,
+            "high attempt delay ({d_high}s) should be at most 30s + 25% jitter"
+        );
         assert!(d_high >= 20.0, "delay should be near the 30s cap");
     }
 
