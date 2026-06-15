@@ -39,6 +39,7 @@ use crate::batcher::UrbBatcher;
 use crate::discovery::MdnsAdvertiser;
 use crate::urb_executor::UrbExecutor;
 use crate::usb::UsbDeviceManager;
+use crate::usb_backend::UsbBackend;
 
 /// Global server state.
 pub struct Server {
@@ -84,6 +85,20 @@ impl Default for ServerConfig {
 impl Server {
     pub async fn new(config: ServerConfig) -> UsbIpResult<Self> {
         let usb = UsbDeviceManager::new()?;
+        let mdns = MdnsAdvertiser::new(config.port).ok();
+        Ok(Self { usb: Arc::new(usb), exports: Arc::new(Mutex::new(HashMap::new())), mdns, config })
+    }
+
+    /// Create a server with a specific USB backend (for testing or non-libusb platforms).
+    ///
+    /// Production code can use [`Server::new`] which defaults to `LibusbBackend`.
+    /// This constructor exists so integration tests can inject a `FakeBackend` and
+    /// exercise the wire protocol without real USB hardware.
+    pub async fn with_backend(
+        config: ServerConfig,
+        backend: Box<dyn UsbBackend>,
+    ) -> UsbIpResult<Self> {
+        let usb = UsbDeviceManager::with_backend(backend);
         let mdns = MdnsAdvertiser::new(config.port).ok();
         Ok(Self { usb: Arc::new(usb), exports: Arc::new(Mutex::new(HashMap::new())), mdns, config })
     }
@@ -180,7 +195,10 @@ impl Server {
 }
 
 /// Handle one TCP client connection.
-async fn handle_client(
+///
+/// Public so integration tests can exercise the wire protocol by binding
+/// to 127.0.0.1:0 without real USB hardware.
+pub async fn handle_client(
     mut stream: TcpStream,
     peer_addr: SocketAddr,
     usb: Arc<UsbDeviceManager>,

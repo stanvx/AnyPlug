@@ -10,12 +10,11 @@
 use std::time::{Duration, Instant};
 
 use tracing::trace;
-use zerocopy::IntoBytes;
 
-use usbip_core::protocol::{UsbIpHeader, USBIP_RET_SUBMIT};
+use usbip_core::protocol::UsbIpHeader;
+use usbip_core::reply::serialize_reply_into;
 use usbip_core::urb::UsbIpCmdSubmit;
 use usbip_core::urb::UsbIpRetSubmit;
-use usbip_core::protocol::U32BE;
 
 use crate::urb_executor::UrbResult;
 
@@ -97,33 +96,21 @@ impl UrbBatcher {
             }
         }
 
-        // Build the reply bytes.
-        let ret_header = UsbIpHeader::new(USBIP_RET_SUBMIT);
-        let ret_submit = usbip_core::urb::UsbIpRetSubmit {
-            seqnum: cmd.seqnum,
-            devid: cmd.devid,
-            direction: cmd.direction,
-            ep: cmd.ep,
-            status: usbip_core::protocol::U32BE::new(result.status as u32),
-            actual_length: usbip_core::protocol::U32BE::new(result.actual_length),
-            start_frame: cmd.start_frame,
-            number_of_packets: cmd.number_of_packets,
-            error_count: usbip_core::protocol::U32BE::new(if result.status == 0 { 0 } else { 1 }),
-            setup: cmd.setup,
-        };
-
-        // Check if adding this would exceed max buffer capacity.
-        let reply_size = 8 + 40 + result.data.len();
+        // Build the reply bytes using the shared serializer.
+        // Temporarily serialize to check capacity before committing.
+        let reply = usbip_core::reply::serialize_reply(
+            cmd,
+            result.status,
+            result.actual_length,
+            &result.data,
+        );
+        let reply_size = reply.len();
         if self.buffer.len() + reply_size > MAX_BATCH_CAPACITY {
             return true;
         }
 
         // Add to batch.
-        self.buffer.extend_from_slice(ret_header.as_bytes());
-        self.buffer.extend_from_slice(ret_submit.as_bytes());
-        if !result.data.is_empty() {
-            self.buffer.extend_from_slice(&result.data);
-        }
+        self.buffer.extend_from_slice(&reply);
 
         self.count += 1;
         self.last_seqnum = Some(seqnum);
@@ -141,7 +128,13 @@ impl UrbBatcher {
     ///
     /// Returns `true` if the caller MUST flush the batch before processing
     /// further URBs.
-    pub fn push_direct(&mut self, cmd: &UsbIpCmdSubmit, status: i32, actual_length: u32, data: &[u8]) -> bool {
+    pub fn push_direct(
+        &mut self,
+        cmd: &UsbIpCmdSubmit,
+        status: i32,
+        actual_length: u32,
+        data: &[u8],
+    ) -> bool {
         let seqnum = cmd.seqnum();
 
         // Force flush on non-sequential seqnum.
@@ -169,29 +162,8 @@ impl UrbBatcher {
             return true;
         }
 
-        // Write header directly.
-        let ret_header = UsbIpHeader::new(USBIP_RET_SUBMIT);
-        self.buffer.extend_from_slice(ret_header.as_bytes());
-
-        // Write RetSubmit directly.
-        let ret_submit = UsbIpRetSubmit {
-            seqnum: cmd.seqnum,
-            devid: cmd.devid,
-            direction: cmd.direction,
-            ep: cmd.ep,
-            status: U32BE::new(status as u32),
-            actual_length: U32BE::new(actual_length),
-            start_frame: cmd.start_frame,
-            number_of_packets: cmd.number_of_packets,
-            error_count: U32BE::new(if status == 0 { 0 } else { 1 }),
-            setup: cmd.setup,
-        };
-        self.buffer.extend_from_slice(ret_submit.as_bytes());
-
-        // Write data — zero-copy from the source slice
-        if !data.is_empty() {
-            self.buffer.extend_from_slice(data);
-        }
+        // Serialize reply directly into internal buffer.
+        serialize_reply_into(&mut self.buffer, cmd, status, actual_length, data);
 
         self.count += 1;
         self.last_seqnum = Some(seqnum);

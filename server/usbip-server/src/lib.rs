@@ -18,4 +18,4 @@ pub use hotplug::{HotplugEvent, HotplugMonitor, HotplugSource, NoopHotplugSource
 pub use server::{Server, ServerConfig};
 pub use urb_executor::UrbResult;
 pub use usb::UsbDeviceManager;
-pub use usb_backend::{UrbTransferResult, UsbBackend};
+pub use usb_backend::{FakeBackend, UrbTransferResult, UsbBackend};

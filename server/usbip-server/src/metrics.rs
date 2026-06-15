@@ -15,38 +15,26 @@ use prometheus::{
 
 /// Number of devices currently exported (gauge).
 pub static DEVICES_EXPORTED: LazyLock<IntGauge> = LazyLock::new(|| {
-    register_int_gauge!(
-        "usbip_devices_exported",
-        "Number of USB devices currently exported"
-    )
-    .expect("metric registration failed")
+    register_int_gauge!("usbip_devices_exported", "Number of USB devices currently exported")
+        .expect("metric registration failed")
 });
 
 /// Number of active TCP client connections (gauge).
 pub static CLIENTS_CONNECTED: LazyLock<IntGauge> = LazyLock::new(|| {
-    register_int_gauge!(
-        "usbip_clients_connected",
-        "Number of active TCP client connections"
-    )
-    .expect("metric registration failed")
+    register_int_gauge!("usbip_clients_connected", "Number of active TCP client connections")
+        .expect("metric registration failed")
 });
 
 /// Total number of URB submissions processed (counter).
 pub static URB_SUBMIT_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_int_counter!(
-        "usbip_urb_submit_total",
-        "Total number of URB submissions processed"
-    )
-    .expect("metric registration failed")
+    register_int_counter!("usbip_urb_submit_total", "Total number of URB submissions processed")
+        .expect("metric registration failed")
 });
 
 /// Total bytes transferred in URB payloads (counter).
 pub static URB_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_int_counter!(
-        "usbip_urb_bytes_total",
-        "Total bytes transferred in URB payloads"
-    )
-    .expect("metric registration failed")
+    register_int_counter!("usbip_urb_bytes_total", "Total bytes transferred in URB payloads")
+        .expect("metric registration failed")
 });
 
 /// Whether encryption is enabled; 1 = enabled, 0 = disabled (gauge).
@@ -67,9 +55,7 @@ pub struct MetricsState;
 
 /// Build a router serving the `/metrics` endpoint on a standalone port.
 pub fn build_metrics_router() -> Router {
-    Router::new()
-        .route("/metrics", get(metrics_handler))
-        .with_state(MetricsState)
+    Router::new().route("/metrics", get(metrics_handler)).with_state(MetricsState)
 }
 
 /// `GET /metrics` — Prometheus text-format metrics.

@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn consume_multiple_accumulates_debt() {
         let mut bucket = TokenBucket::new(1000); // 1000 B/s
-        // First 1000 is free (bucket starts full)
+                                                 // First 1000 is free (bucket starts full)
         assert_eq!(bucket.consume(1000).unwrap(), Duration::ZERO);
         // Second 1000 should need ~1 second
         let delay = bucket.consume(1000).unwrap();
@@ -265,7 +265,7 @@ mod tests {
     #[tokio::test]
     async fn throttle_delays_when_exceeded() {
         let mut bucket = TokenBucket::new(100); // 100 B/s
-        // Spend all tokens
+                                                // Spend all tokens
         bucket.throttle(100).await;
         // Trying to send another 100 should sleep ~1 s
         let before = Instant::now();

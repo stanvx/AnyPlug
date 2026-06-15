@@ -311,20 +311,18 @@ fn parse_busid(busid: &str) -> UsbIpResult<(u8, u8)> {
 /// A fake USB backend that returns a fixed set of devices.
 ///
 /// Used in tests for `UsbDeviceManager` and anywhere else that needs
-/// a predictable backend.
-#[cfg(test)]
-pub(crate) struct FakeBackend {
+/// a predictable backend.  Available unconditionally so integration tests
+/// can inject it via `Server::with_backend()`.
+pub struct FakeBackend {
     devices: Vec<UsbIpDeviceEntry>,
 }
 
-#[cfg(test)]
 impl FakeBackend {
     pub fn new(devices: Vec<UsbIpDeviceEntry>) -> Self {
         Self { devices }
     }
 }
 
-#[cfg(test)]
 impl UsbBackend for FakeBackend {
     fn list_devices(&self) -> Vec<UsbIpDeviceEntry> {
         self.devices.clone()
@@ -365,8 +363,7 @@ impl UsbBackend for FakeBackend {
 }
 
 /// Helper to create a test `UsbIpDeviceEntry`.
-#[cfg(test)]
-pub(crate) fn make_test_entry(busid: &str, vid: u16, pid: u16) -> UsbIpDeviceEntry {
+pub fn make_test_entry(busid: &str, vid: u16, pid: u16) -> UsbIpDeviceEntry {
     let mut entry = UsbIpDeviceEntry {
         path: [0u8; 256],
         busid: [0u8; 32],
