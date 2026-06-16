@@ -59,12 +59,15 @@ data class HostPort(val host: String, val port: Int = 3240)
 
 /**
  * Parse a "host:port" string into [HostPort], defaulting to 3240 when
- * no port is provided or the port portion is unparseable.
+ * no port is provided or the port portion is unparseable or out of range.
+ *
+ * Out-of-range or unparseable ports are clamped to 3240 rather than
+ * throwing — call sites should treat the returned port as a hint and
+ * validate again before opening a socket.
  */
 fun parseHostPort(input: String): HostPort {
     val parts = input.split(":")
-    return HostPort(
-        host = parts[0],
-        port = if (parts.size > 1) parts[1].toIntOrNull() ?: 3240 else 3240,
-    )
+    val rawPort = if (parts.size > 1) parts[1].toIntOrNull() else null
+    val port = if (rawPort != null && rawPort in 1..65535) rawPort else 3240
+    return HostPort(host = parts[0].ifEmpty { "127.0.0.1" }, port = port)
 }

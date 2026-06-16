@@ -135,15 +135,13 @@ private fun ServerPanel(
                 title = device.name,
                 subtitle = "${device.vid.toString(16).padStart(4, '0')}:" +
                     device.pid.toString(16).padStart(4, '0'),
-                actionLabel = if (isThisDeviceShared) "Stop Sharing" else "Share",
-                isDestructive = isThisDeviceShared,
+                actionLabel = "Share",
+                isShared = isThisDeviceShared,
                 onAction = {
-                    if (!isThisDeviceShared) {
-                        if (device.isMassStorage) {
-                            showStorageWarning = device
-                        } else {
-                            onStartServer(device.name)
-                        }
+                    if (!isThisDeviceShared && device.isMassStorage) {
+                        showStorageWarning = device
+                    } else if (!isThisDeviceShared) {
+                        onStartServer(device.name)
                     }
                 },
                 modifier = Modifier.padding(vertical = 4.dp),

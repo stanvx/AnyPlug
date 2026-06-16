@@ -7,11 +7,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -19,27 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.anyplug.theme.runningGreen
-import com.anyplug.theme.stoppedGray
 
-/**
- * Reusable design-system components for AnyPlug.
- *
- * Every component draws its tokens from [MaterialTheme] so they
- * automatically adapt to the M3 Expressive theme.
- */
-
-// ── Status indicator ───────────────────────────────────────────────────
-
-/**
- * A compact card showing the current service status.
- *
- * - Running    → green dot + descriptive text + optional Stop button
- * - Stopped    → gray dot + "Stopped"
- *
- * The card is always visible to keep the layout stable — it never
- * pushes content around by appearing or disappearing.
- */
 @Composable
 fun StatusCard(
     isRunning: Boolean,
@@ -49,35 +32,36 @@ fun StatusCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
             containerColor = if (isRunning)
                 MaterialTheme.colorScheme.primaryContainer
             else
                 MaterialTheme.colorScheme.surfaceVariant,
         ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = if (isRunning) 2.dp else 0.dp,
+        ),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Status dot
             Text(
-                text = "•",      // bullet
-                color = if (isRunning) MaterialTheme.colorScheme.runningGreen
-                else MaterialTheme.colorScheme.stoppedGray,
+                text = "\u2022",
+                color = if (isRunning) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
-            // Status text — takes remaining space
             Text(
-                text = if (isRunning) "Running — $modeText" else "Stopped",
+                text = if (isRunning) "Running \u2014 $modeText" else "Stopped",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
-            // Stop button — only shown when running
             if (onStopClick != null) {
                 TextButton(onClick = onStopClick) {
                     Text(
@@ -91,14 +75,6 @@ fun StatusCard(
     }
 }
 
-// ── Device card ────────────────────────────────────────────────────────
-
-/**
- * A row-style card showing a USB device and its share / connect action.
- *
- * @param isDestructive When true, the action button uses error/destructive
- *   styling (used for "Stop Sharing" state).
- */
 @Composable
 fun DeviceCard(
     title: String,
@@ -106,19 +82,25 @@ fun DeviceCard(
     actionLabel: String,
     onAction: () -> Unit,
     modifier: Modifier = Modifier,
-    isDestructive: Boolean = false,
+    isShared: Boolean = false,
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = if (isShared)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.30f)
+            else
+                MaterialTheme.colorScheme.surface,
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = if (isShared) 4.dp else 1.dp,
+        ),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -126,6 +108,7 @@ fun DeviceCard(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (isShared) FontWeight.SemiBold else FontWeight.Normal,
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -134,29 +117,37 @@ fun DeviceCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Button(
-                onClick = onAction,
-                contentPadding = ButtonDefaults.TextButtonContentPadding,
-                colors = if (isDestructive) {
-                    ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError,
-                    )
-                } else {
-                    ButtonDefaults.buttonColors()
-                },
-            ) {
-                Text(text = actionLabel)
+            if (isShared) {
+                Spacer(modifier = Modifier.width(12.dp))
+                SuggestionChip(
+                    onClick = {},
+                    label = {
+                        Text(
+                            text = "Sharing",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    },
+                    colors = SuggestionChipDefaults.suggestionChipColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ),
+                    border = null,
+                    enabled = false,
+                )
+            } else {
+                Spacer(modifier = Modifier.width(12.dp))
+                Button(
+                    onClick = onAction,
+                    contentPadding = ButtonDefaults.TextButtonContentPadding,
+                ) {
+                    Text(text = actionLabel)
+                }
             }
         }
     }
 }
 
-// ── Section header ─────────────────────────────────────────────────────
-
-/**
- * Standard section title used to separate UI areas.
- */
 @Composable
 fun SectionHeader(
     title: String,
@@ -171,11 +162,6 @@ fun SectionHeader(
     )
 }
 
-// ── Empty state ────────────────────────────────────────────────────────
-
-/**
- * Placeholder shown when a list has no items.
- */
 @Composable
 fun EmptyState(
     message: String,
@@ -183,6 +169,7 @@ fun EmptyState(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
         ),
@@ -198,20 +185,15 @@ fun EmptyState(
     }
 }
 
-// ── Status dot (small inline) ──────────────────────────────────────────
-
-/**
- * A small coloured circle used inline to indicate running / stopped state.
- */
 @Composable
 fun StatusDot(
     isRunning: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val color = if (isRunning) MaterialTheme.colorScheme.runningGreen
-    else MaterialTheme.colorScheme.stoppedGray
+    val color = if (isRunning) MaterialTheme.colorScheme.primary
+    else MaterialTheme.colorScheme.onSurfaceVariant
     Text(
-        text = "•",
+        text = "\u2022",
         color = color,
         fontWeight = FontWeight.Bold,
         style = MaterialTheme.typography.titleLarge,

@@ -12,6 +12,7 @@ import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+
 /**
  * Android USB/IP Server — exports locally-connected USB devices.
  *
@@ -31,6 +32,7 @@ class UsbIpServer(
     private var serverSocket: ServerSocket? = null
     private var deviceConnection: UsbDeviceConnection? = null
     private var claimedDevice: UsbDevice? = null
+    @Volatile
     private var running = false
     private val connectionLock = Any()
     private val clientSockets = mutableListOf<Socket>()
@@ -71,16 +73,29 @@ class UsbIpServer(
                 "If it is a mass-storage device, unmount it in Android Settings first."
             )
 
-        // Start TCP server
-        serverSocket = ServerSocket(port)
+        // Start TCP server. SO_REUSEADDR lets us rebind to the same port
+        // immediately after a previous server's socket closed (Linux holds
+        // closed sockets in TIME_WAIT for ~60s by default; without this
+        // option the user sees "bind failed: EADDRINUSE" on retry).
+        serverSocket = ServerSocket().apply {
+            reuseAddress = true
+            bind(java.net.InetSocketAddress(port))
+        }
 
-        while (running) {
-            val client = withContext(Dispatchers.IO) {
-                serverSocket?.accept()
-            } ?: break
+        try {
+            while (running) {
+                val client = withContext(Dispatchers.IO) {
+                    serverSocket?.accept()
+                } ?: break
 
-            scope.launch {
-                handleClient(client, usbManager)
+                scope.launch {
+                    handleClient(client, usbManager)
+                }
+            }
+        } finally {
+            synchronized(connectionLock) {
+                serverSocket?.close()
+                serverSocket = null
             }
         }
     }
@@ -88,10 +103,13 @@ class UsbIpServer(
     fun stop() {
         running = false
         // Close server socket — unblocks accept() so no new clients connect
-        serverSocket?.close()
-        // Close all client sockets — unblocks readExact() in their urbLoop
         synchronized(connectionLock) {
-            clientSockets.forEach { it.close() }
+            serverSocket?.close()
+            serverSocket = null
+            // Close all client sockets — unblocks readExact() in their urbLoop
+            clientSockets.forEach {
+                runCatching { it.close() }
+            }
             clientSockets.clear()
         }
         // Cancel coroutines (takes effect at suspension points like withContext)

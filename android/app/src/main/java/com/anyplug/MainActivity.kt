@@ -1,14 +1,19 @@
 package com.anyplug
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.hardware.usb.UsbManager
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.widget.Toast
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -22,10 +27,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.anyplug.bridge.RustBridge
+import com.anyplug.findDevice
 import com.anyplug.model.DiscoveredServer
 import com.anyplug.model.LocalUsbDevice
+import com.anyplug.parseHostPort
 import com.anyplug.theme.AnyPlugTheme
 import com.anyplug.ui.MainScreen
+import com.anyplug.usbManager
 
 /**
  * Phone / tablet launcher activity for AnyPlug.
@@ -48,6 +56,13 @@ class MainActivity : ComponentActivity() {
     // Reactive USB device list — updated from hotplug callbacks
     private val localDevices = mutableStateOf(emptyList<LocalUsbDevice>())
 
+    // Reactive service state — updated by collecting the service's state flow
+    private val serviceMode = mutableStateOf(AnyPlugService.Mode.IDLE)
+    private val sharedDeviceNameState = mutableStateOf("")
+
+    // Triggers recomposition when the service binds/unbinds
+    private val serviceConnected = mutableStateOf(false)
+
     // Manifest only covers ATTACHED; this catches DETACHED at runtime
     private val detachReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -60,11 +75,27 @@ class MainActivity : ComponentActivity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as AnyPlugService.LocalBinder).getService()
+            serviceConnected.value = true
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             service = null
+            serviceConnected.value = false
         }
+    }
+
+    // Observe mode changes from the service when re-attaching to it
+    private val modeCollector: suspend (AnyPlugService.Mode) -> Unit = { mode ->
+        serviceMode.value = mode
+        if (mode == AnyPlugService.Mode.IDLE) {
+            sharedDeviceNameState.value = ""
+        } else {
+            sharedDeviceNameState.value = service?.getSharedDeviceName() ?: ""
+        }
+    }
+
+    companion object {
+        private const val REQ_POST_NOTIFICATIONS = 1001
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,12 +112,29 @@ class MainActivity : ComponentActivity() {
 
         localDevices.value = usbManager.attachedDevices()
 
+        requestNotificationPermissionIfNeeded()
+
         setContent {
             AnyPlugTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     MainScreenContent()
                 }
             }
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                REQ_POST_NOTIFICATIONS,
+            )
         }
     }
 
@@ -99,6 +147,18 @@ class MainActivity : ComponentActivity() {
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED ||
             intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
             localDevices.value = usbManager.attachedDevices()
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_POST_NOTIFICATIONS) {
+            // User can deny — service still runs, but notification is hidden.
+            // We don't surface this as an error to keep the flow simple.
         }
     }
 
@@ -120,14 +180,31 @@ class MainActivity : ComponentActivity() {
         val context = LocalContext.current
         val discoveredServers = remember { emptyList<DiscoveredServer>() }
         val devices by localDevices
-        val isRunning = service?.isRunning() ?: false
-        val modeText = service?.getModeText() ?: ""
-        val sharedDeviceName = service?.getSharedDeviceName() ?: ""
+        val connected by serviceConnected
+        // Touch connected to force recomposition when service binds/unbinds
+        @Suppress("UNUSED_VARIABLE")
+        val unused = connected
+        val mode by serviceMode
+        val sharedName by sharedDeviceNameState
+
+        val isRunning = mode != AnyPlugService.Mode.IDLE
+        val modeText = when (mode) {
+            AnyPlugService.Mode.SERVER -> "Server — sharing $sharedName"
+            AnyPlugService.Mode.CLIENT -> "Client — connected"
+            AnyPlugService.Mode.IDLE -> ""
+        }
 
         // Collect service-level errors and surface them to the user
         LaunchedEffect(service) {
             service?.errors?.collect { msg ->
                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+
+        // Collect service mode changes — re-runs when serviceConnected flips
+        LaunchedEffect(connected, service) {
+            service?.let { svc ->
+                svc.state.collect(modeCollector)
             }
         }
 
@@ -156,7 +233,7 @@ class MainActivity : ComponentActivity() {
             localDevices = devices,
             isServiceRunning = isRunning,
             serviceModeText = modeText,
-            sharedDeviceName = sharedDeviceName,
+            sharedDeviceName = sharedName,
         )
     }
 }

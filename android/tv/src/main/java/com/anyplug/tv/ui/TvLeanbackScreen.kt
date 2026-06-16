@@ -118,8 +118,8 @@ fun TvLeanbackScreen(
                         title = device.name,
                         subtitle = "${device.vid.toString(16).padStart(4, '0')}:" +
                             device.pid.toString(16).padStart(4, '0'),
-                        actionLabel = if (isThisDeviceShared) "Stop Sharing" else "Share",
-                        isDestructive = isThisDeviceShared,
+                        actionLabel = "Share",
+                        isShared = isThisDeviceShared,
                         onAction = {
                             if (!isThisDeviceShared && device.isMassStorage) {
                                 showStorageWarning = device

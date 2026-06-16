@@ -22,6 +22,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -116,11 +118,12 @@ fun TvCard(
 // ── Device Card ────────────────────────────────────────────────────────
 
 /**
- * Row-style device card with title, subtitle, and action button.
+ * Row-style device card with title, subtitle, and action.
  * Large targets enable easy D-pad selection.
  *
- * @param isDestructive When true, the action button uses error/destructive
- *   styling (used for "Stop Sharing" state).
+ * When [isShared] is true the card shows a non-interactive "Sharing"
+ * chip instead of an action button — the only Stop affordance is on
+ * [TvStatusCard].
  */
 @Composable
 fun TvDeviceCard(
@@ -128,9 +131,16 @@ fun TvDeviceCard(
     subtitle: String,
     actionLabel: String,
     onAction: () -> Unit,
-    isDestructive: Boolean = false,
+    modifier: Modifier = Modifier,
+    isShared: Boolean = false,
 ) {
-    TvCard {
+    TvCard(
+        modifier = modifier,
+        backgroundColor = if (isShared)
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+        else
+            MaterialTheme.colorScheme.surfaceVariant,
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -142,7 +152,7 @@ fun TvDeviceCard(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = if (isShared) FontWeight.Bold else FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -154,11 +164,26 @@ fun TvDeviceCard(
                 )
             }
             Spacer(modifier = Modifier.width(24.dp))
-            TvButton(
-                label = actionLabel,
-                onClick = onAction,
-                isDestructive = isDestructive,
-            )
+            if (isShared) {
+                SuggestionChip(
+                    onClick = {},
+                    label = {
+                        Text(
+                            text = "Sharing",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    },
+                    colors = SuggestionChipDefaults.suggestionChipColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ),
+                    border = null,
+                    enabled = false,
+                )
+            } else {
+                TvButton(label = actionLabel, onClick = onAction)
+            }
         }
     }
 }
@@ -209,14 +234,6 @@ fun TvEmptyState(
 
 // ── Status Card ────────────────────────────────────────────────────────
 
-/**
- * Compact card showing the current USB/IP service status.
- *
- * Uses a green/gray dot indicator with descriptive text.
- * Shows a "Stop" button when the service is running.
- *
- * The card is always visible to keep the layout stable.
- */
 @Composable
 fun TvStatusCard(
     isRunning: Boolean,
@@ -243,19 +260,16 @@ fun TvStatusCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Status dot (large bullet)
             Text(
-                text = "●",
+                text = "\u25CF",
                 color = dotColor,
                 style = MaterialTheme.typography.titleLarge,
             )
-            // Status text — takes remaining space
             Text(
-                text = if (isRunning) "Running — $modeText" else "Stopped",
+                text = if (isRunning) "Running \u2014 $modeText" else "Stopped",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
-            // Stop button — only shown when running
             if (onStopClick != null) {
                 TextButton(onClick = onStopClick) {
                     Text(

@@ -147,8 +147,12 @@ class UsbIpClient(
             val retStruct = ByteArray(40)
 
             withContext(Dispatchers.IO) {
-                input.read(retHeader)
-                input.read(retStruct)
+                if (!readExact(input, retHeader)) {
+                    throw IOException("Server closed connection before RET_SUBMIT header")
+                }
+                if (!readExact(input, retStruct)) {
+                    throw IOException("Server closed connection before RET_SUBMIT body")
+                }
             }
 
             val ret = ByteBuffer.wrap(retStruct).order(ByteOrder.BIG_ENDIAN)
@@ -160,7 +164,11 @@ class UsbIpClient(
             // Read IN data if present
             val inData = if (direction == 1 && retStatus == 0 && retActualLen > 0) {
                 val buf = ByteArray(retActualLen)
-                withContext(Dispatchers.IO) { input.read(buf) }
+                withContext(Dispatchers.IO) {
+                    if (!readExact(input, buf)) {
+                        throw IOException("Server closed connection mid-IN data")
+                    }
+                }
                 buf
             } else {
                 ByteArray(0)
@@ -176,6 +184,14 @@ class UsbIpClient(
     // ─── Private ─────────────────────────────────────────────
 
     private fun requestImport(input: InputStream, output: OutputStream) {
+        if (busId.isBlank()) {
+            throw IllegalStateException("Bus ID is required")
+        }
+        val busidBytes = busId.toByteArray(Charsets.UTF_8)
+        if (busidBytes.size > 32) {
+            throw IllegalStateException("Bus ID exceeds 32 bytes: ${busidBytes.size}")
+        }
+
         val reqBuf = ByteBuffer.allocate(8 + 32).order(ByteOrder.BIG_ENDIAN)
 
         // USB/IP header
@@ -184,15 +200,18 @@ class UsbIpClient(
         reqBuf.putInt(0)
 
         // Busid (32 bytes, null-padded)
-        val busidBytes = busId.toByteArray()
-        reqBuf.put(busidBytes.copyOf(32))
+        val paddedBusid = ByteArray(32)
+        System.arraycopy(busidBytes, 0, paddedBusid, 0, busidBytes.size)
+        reqBuf.put(paddedBusid)
 
         output.write(reqBuf.array())
         output.flush()
 
-        // Read reply header
+        // Read reply header (8 bytes — must read all of them)
         val replyHeader = ByteArray(8)
-        input.read(replyHeader)
+        if (!readExact(input, replyHeader)) {
+            throw IOException("Server closed connection before sending import reply")
+        }
 
         val rh = ByteBuffer.wrap(replyHeader).order(ByteOrder.BIG_ENDIAN)
         val command = rh.getShort(2).toInt() and 0xFFFF
@@ -207,8 +226,20 @@ class UsbIpClient(
 
         // Read device entry (312 bytes) + descriptor tree
         val entryAndDesc = ByteArray(4096)
-        val totalRead = input.read(entryAndDesc)
+        if (!readExact(input, entryAndDesc)) {
+            throw IOException("Server closed connection before sending import payload")
+        }
         // Parse descriptors to verify device identity
+    }
+
+    private fun readExact(input: InputStream, buf: ByteArray): Boolean {
+        var offset = 0
+        while (offset < buf.size) {
+            val n = input.read(buf, offset, buf.size - offset)
+            if (n < 0) return false
+            offset += n
+        }
+        return true
     }
 
     private suspend fun urbLoop(input: InputStream, output: OutputStream) {
