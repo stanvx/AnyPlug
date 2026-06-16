@@ -12,6 +12,9 @@ import com.anyplug.client.UsbIpClient
 import com.anyplug.server.UsbIpServer
 import com.anyplug.server.UsbIpServer.UsbDeviceFilter
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /**
  * Foreground service that keeps the USB/IP connection alive.
@@ -24,6 +27,10 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /** One-shot error events propagated to the UI layer. */
+    private val _errors = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val errors: SharedFlow<String> = _errors.asSharedFlow()
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var transferWakeLock: PowerManager.WakeLock? = null
@@ -128,6 +135,8 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
 
     /**
      * Start exporting a USB device. The service becomes a USB/IP server.
+     *
+     * Errors are emitted via [errors] so the UI can show meaningful feedback.
      */
     fun startServer(deviceName: String, vid: Int, pid: Int) {
         currentMode = Mode.SERVER
@@ -140,12 +149,23 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
             wakeLockManager = this
         )
         serviceScope.launch {
-            serverRunner?.start()
+            try {
+                serverRunner?.start()
+            } catch (e: Exception) {
+                _errors.tryEmit(e.message ?: "Server failed to start")
+                currentMode = Mode.IDLE
+                sharedDeviceName = ""
+                serverRunner?.stop()
+                serverRunner = null
+                wakeLock?.release()
+            }
         }
     }
 
     /**
      * Start importing a USB device from a remote server.
+     *
+     * Errors are emitted via [errors] so the UI can show meaningful feedback.
      */
     fun startClient(serverHost: String, serverPort: Int, busId: String) {
         currentMode = Mode.CLIENT
@@ -159,7 +179,16 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
             wakeLockManager = this
         )
         serviceScope.launch {
-            clientRunner?.start()
+            try {
+                clientRunner?.start()
+            } catch (e: Exception) {
+                _errors.tryEmit(e.message ?: "Client failed to connect")
+                currentMode = Mode.IDLE
+                sharedDeviceName = ""
+                clientRunner?.stop()
+                clientRunner = null
+                wakeLock?.release()
+            }
         }
     }
 

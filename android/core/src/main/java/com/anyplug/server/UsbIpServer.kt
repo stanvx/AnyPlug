@@ -2,6 +2,7 @@ package com.anyplug.server
 
 import android.content.Context
 import android.hardware.usb.*
+import android.util.Log
 import kotlinx.coroutines.*
 import com.anyplug.WakeLockManager
 import java.io.InputStream
@@ -31,12 +32,15 @@ class UsbIpServer(
     private var deviceConnection: UsbDeviceConnection? = null
     private var claimedDevice: UsbDevice? = null
     private var running = false
+    private val connectionLock = Any()
+    private val clientSockets = mutableListOf<Socket>()
 
     data class UsbDeviceFilter(val vendorId: Int, val productId: Int)
 
     companion object {
         const val DEFAULT_PORT = 3240
         const val USBIP_VERSION = 0x0111
+        private const val TAG = "UsbIpServer"
         // Protocol commands
         const val OP_REQ_DEVLIST  = 0x8003
         const val OP_REP_DEVLIST  = 0x0005
@@ -53,10 +57,19 @@ class UsbIpServer(
 
         // Find and claim the target device
         claimedDevice = findDevice(usbManager)
-            ?: throw IllegalStateException("Device not found: ${deviceFilter}")
+            ?: throw IllegalStateException(
+                "Device (VID:${deviceFilter.vendorId.toString(16)} " +
+                "PID:${deviceFilter.productId.toString(16)}) not found. " +
+                "Was it unplugged?"
+            )
 
+        @Suppress("UNNECESSARY_NOT_NULL_ASSERTION")
         deviceConnection = claimDevice(usbManager, claimedDevice!!)
-            ?: throw IllegalStateException("Failed to claim device")
+            ?: throw IllegalStateException(
+                "Failed to claim device (VID:${deviceFilter.vendorId.toString(16)} " +
+                "PID:${deviceFilter.productId.toString(16)}). " +
+                "If it is a mass-storage device, unmount it in Android Settings first."
+            )
 
         // Start TCP server
         serverSocket = ServerSocket(port)
@@ -74,8 +87,16 @@ class UsbIpServer(
 
     fun stop() {
         running = false
-        scope.cancel()
+        // Close server socket — unblocks accept() so no new clients connect
         serverSocket?.close()
+        // Close all client sockets — unblocks readExact() in their urbLoop
+        synchronized(connectionLock) {
+            clientSockets.forEach { it.close() }
+            clientSockets.clear()
+        }
+        // Cancel coroutines (takes effect at suspension points like withContext)
+        scope.cancel()
+        // Release USB device connection
         releaseDevice()
     }
 
@@ -91,17 +112,23 @@ class UsbIpServer(
 
     private fun claimDevice(manager: UsbManager, device: UsbDevice): UsbDeviceConnection? {
         if (!manager.hasPermission(device)) {
-            // Request permission — in practice, the Activity handles this
+            Log.w(TAG, "No USB permission for ${device.productName}")
             return null
         }
 
         val connection = manager.openDevice(device) ?: return null
 
-        // Claim all interfaces
+        // Claim all interfaces. The force=true flag attempts to detach
+        // any kernel driver (e.g. usb-storage for mass storage devices).
+        // NOTE: On some devices, mass storage interfaces cannot be claimed
+        // without first unmounting the filesystem in Android Settings.
         for (i in 0 until device.interfaceCount) {
             val iface = device.getInterface(i)
             if (!connection.claimInterface(iface, true)) {
-                // Release previously claimed interfaces
+                Log.e(TAG, "Failed to claim interface $i on ${device.productName} " +
+                    "(class=0x${device.deviceClass.toString(16)}, " +
+                    "subclass=0x${device.deviceSubclass.toString(16)})")
+                // Release any interfaces successfully claimed before the failure
                 for (j in 0 until i) {
                     connection.releaseInterface(device.getInterface(j))
                 }
@@ -114,15 +141,19 @@ class UsbIpServer(
     }
 
     private fun releaseDevice() {
-        val conn = deviceConnection ?: return
-        val device = claimedDevice ?: return
-
+        val conn: UsbDeviceConnection
+        val device: UsbDevice
+        synchronized(connectionLock) {
+            // `synchronized` is inline — return exits releaseDevice()
+            conn = deviceConnection ?: return
+            device = claimedDevice ?: return
+            deviceConnection = null
+            claimedDevice = null
+        }
         for (i in 0 until device.interfaceCount) {
             conn.releaseInterface(device.getInterface(i))
         }
         conn.close()
-        deviceConnection = null
-        claimedDevice = null
     }
 
     // ─── Client Handler ──────────────────────────────────────
@@ -130,6 +161,10 @@ class UsbIpServer(
     private suspend fun handleClient(socket: Socket, usbManager: UsbManager) {
         val input = socket.getInputStream()
         val output = socket.getOutputStream()
+
+        synchronized(connectionLock) {
+            clientSockets.add(socket)
+        }
 
         try {
             // Read USB/IP header (8 bytes)
@@ -146,6 +181,9 @@ class UsbIpServer(
             e.printStackTrace()
         } finally {
             socket.close()
+            synchronized(connectionLock) {
+                clientSockets.remove(socket)
+            }
         }
     }
 
@@ -197,7 +235,7 @@ class UsbIpServer(
 
     private fun urbLoop(input: InputStream, output: OutputStream, device: UsbDevice) {
         val headerBuf = ByteArray(8)
-        val conn = deviceConnection ?: return
+        val conn = synchronized(connectionLock) { deviceConnection } ?: return
 
         while (running) {
             if (!readExact(input, headerBuf)) break

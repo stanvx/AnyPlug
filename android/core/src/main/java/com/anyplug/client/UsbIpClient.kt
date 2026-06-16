@@ -3,6 +3,7 @@ package com.anyplug.client
 import kotlinx.coroutines.*
 import com.anyplug.WakeLockManager
 import java.io.InputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.net.Socket
 import java.nio.ByteBuffer
@@ -65,14 +66,20 @@ class UsbIpClient(
     suspend fun start() {
         running = true
 
-        withContext(Dispatchers.IO) {
-            socket = Socket(serverHost, serverPort).apply {
-                tcpNoDelay = true
+        try {
+            withContext(Dispatchers.IO) {
+                socket = Socket(serverHost, serverPort).apply {
+                    tcpNoDelay = true
+                }
             }
+        } catch (e: Exception) {
+            socket = null
+            throw IOException("Cannot connect to $serverHost:$serverPort", e)
         }
 
-        val input = socket!!.getInputStream()
-        val output = socket!!.getOutputStream()
+        val s = socket ?: throw IOException("Socket was not initialized")
+        val input = s.getInputStream()
+        val output = s.getOutputStream()
 
         // Request import
         requestImport(input, output)
