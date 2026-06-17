@@ -524,9 +524,7 @@ async fn put_config_persists_and_reloads() {
 /// the `AppState` channel.
 #[tokio::test]
 async fn ws_events_forwards_latency_frames() {
-    use axum::body::Body;
-    use futures::{SinkExt, StreamExt};
-    use tokio::net::TcpStream;
+    use futures::StreamExt;
     use tokio_tungstenite::tungstenite::Message as WsMsg;
 
     let browser = Arc::new(FakeBrowser::new(vec![]));
