@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use usbip_core::error::UsbIpResult;
+use usbip_server::usb_backend::{make_test_entry, FakeBackend};
 use usbip_server::{metrics, BandwidthLimit, Server, ServerConfig};
 
 #[derive(Parser, Debug, Clone, PartialEq)]
@@ -49,6 +50,12 @@ pub struct Cli {
     /// Prometheus metrics port (if set, serves /metrics on this port)
     #[arg(long)]
     pub metrics_port: Option<u16>,
+
+    /// Use a fake USB backend with the given `busid:vid:pid` entries
+    /// (repeatable). For local development on machines without real
+    /// USB devices. Example: `--fake-devices 1-1:046d:c261 --fake-devices 1-2:8087:0024`.
+    #[arg(long = "fake-devices", value_parser = parse_fake_device, value_name = "BUSID:VID:PID")]
+    pub fake_devices: Vec<(String, u16, u16)>,
 }
 
 impl Default for Cli {
@@ -71,6 +78,20 @@ fn parse_vid_pid(s: &str) -> Result<(u16, u16), String> {
     let vid = u16::from_str_radix(parts[0], 16).map_err(|e| e.to_string())?;
     let pid = u16::from_str_radix(parts[1], 16).map_err(|e| e.to_string())?;
     Ok((vid, pid))
+}
+
+fn parse_fake_device(s: &str) -> Result<(String, u16, u16), String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return Err("format: BUSID:VID:PID (e.g., 1-1:046d:c261)".to_string());
+    }
+    let busid = parts[0].to_string();
+    if !busid.contains('-') {
+        return Err("busid must be of the form BUSNUM-DEVNUM (e.g. 1-1)".to_string());
+    }
+    let vid = u16::from_str_radix(parts[1], 16).map_err(|e| e.to_string())?;
+    let pid = u16::from_str_radix(parts[2], 16).map_err(|e| e.to_string())?;
+    Ok((busid, vid, pid))
 }
 
 /// Resolve the bind address to a single IP string.
@@ -193,7 +214,17 @@ async fn main() -> UsbIpResult<()> {
         per_client_bandwidth: None,
     };
 
-    let server = Server::new(config.clone()).await?;
+    let server = if cli.fake_devices.is_empty() {
+        Server::new(config.clone()).await?
+    } else {
+        let entries: Vec<_> = cli
+            .fake_devices
+            .iter()
+            .map(|(busid, vid, pid)| make_test_entry(busid, *vid, *pid))
+            .collect();
+        let backend = Box::new(FakeBackend::new(entries));
+        Server::with_backend(config.clone(), backend).await?
+    };
 
     // Set encryption metric
     if cli.encrypt {
