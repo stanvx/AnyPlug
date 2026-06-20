@@ -277,7 +277,7 @@ mod tests {
         // the other's, so run the key exchanges concurrently.
         let client_fut = CryptoStream::client_side(client_tcp, client_addr);
         let server_fut = CryptoStream::server_side(server_tcp, server_addr);
-        let (mut client, mut server) = tokio::join!(client_fut, server_fut);
+        let (client, server) = tokio::join!(client_fut, server_fut);
         let mut client = client.unwrap();
         let mut server = server.unwrap();
 
@@ -310,7 +310,7 @@ mod tests {
         client_tcp.read_exact(&mut pubkey).await.unwrap();
 
         // Send our own pubkey to unblock the server's read.
-        let mut client_pub = vec![0u8; 32];
+        let client_pub = vec![0u8; 32];
         client_tcp.write_all(&(32u32.to_be_bytes())).await.unwrap();
         client_tcp.write_all(&client_pub).await.unwrap();
         client_tcp.flush().await.unwrap();
