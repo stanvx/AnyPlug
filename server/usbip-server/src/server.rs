@@ -533,16 +533,18 @@ mod real_importer {
                 });
             }
         }
+    }
 
-        /// Record a JoinHandle for the URB forwarding loop. Public so
-        /// the `run_urb_forwarding` task can register itself; called
-        /// from a separate `tokio::spawn` site in the production
-        /// wiring. (Not exercised by the current API tests because the
-        /// trait method is synchronous — the production path that
-        /// uses this is constructed when the API server starts a
-        /// forwarder for an imported device.)
+    /// Record a JoinHandle for the URB forwarding loop. Public so
+    /// the `run_urb_forwarding` task can register itself; called
+    /// from a separate `tokio::spawn` site in the production
+    /// wiring. (Not exercised by the current API tests because the
+    /// trait method is synchronous — the production path that
+    /// uses this is constructed when the API server starts a
+    /// forwarder for an imported device.)
+    impl RealImporter {
         #[allow(dead_code)]
-        async fn record(&self, busid: String, handle: JoinHandle<()>) {
+        pub async fn record(&self, busid: String, handle: JoinHandle<()>) {
             let mut map = self.handles.lock().await;
             map.insert(busid, handle);
         }
