@@ -67,6 +67,19 @@ class ServerDiscovery(
     }
 
     /**
+     * Recreate the JmDNS session. Use when the user pulls to refresh or
+     * taps a manual refresh button — addresses the case where JmDNS
+     * bound to a stale network state at boot and never recovered.
+     * Re-entrant: safe to call repeatedly.
+     */
+    fun restart() {
+        Log.i(TAG, "Restarting mDNS discovery")
+        stop()
+        start()
+    }
+    }
+
+    /**
      * Tear down the JmDNS session and release the multicast lock.
      * Safe to call when not started.
      */

@@ -179,6 +179,16 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
         serverDiscovery?.stop()
     }
 
+    /**
+     * Recreate the mDNS discovery session. Use when the user pulls to
+     * refresh or taps a manual refresh button — addresses the case
+     * where JmDNS bound to a stale network state at boot and never
+     * recovered. Safe to call when discovery is not running.
+     */
+    fun restartDiscovery() {
+        serverDiscovery?.restart()
+    }
+
     // ─── State queries ─────────────────────────────────────────
 
     /**
