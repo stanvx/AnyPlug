@@ -29,7 +29,7 @@ use usbip_core::error::ErrorKind;
 use usbip_core::error::UsbIpResult;
 use usbip_core::protocol::{
     UsbIpDeviceEntry, UsbIpHeader, OP_REP_DEVLIST, OP_REP_IMPORT, OP_REQ_DEVLIST, OP_REQ_IMPORT,
-    STATUS_ST_DEV_BUSY, USBIP_CMD_SUBMIT,
+    STATUS_ST_DEV_BUSY, STATUS_ST_NODEV, USBIP_CMD_SUBMIT,
 };
 use usbip_core::urb::UsbIpCmdSubmit;
 
@@ -86,7 +86,8 @@ impl Default for ServerConfig {
 impl Server {
     pub async fn new(config: ServerConfig) -> UsbIpResult<Self> {
         let usb = UsbDeviceManager::new()?;
-        let mdns = MdnsAdvertiser::new(config.port).ok();
+        let devices = usb.list_exportable_devices(&config.allowed_vid_pid);
+        let mdns = MdnsAdvertiser::new(config.port, devices).ok();
         Ok(Self { usb: Arc::new(usb), exports: Arc::new(Mutex::new(HashMap::new())), mdns, config })
     }
 
@@ -100,7 +101,8 @@ impl Server {
         backend: Box<dyn UsbBackend>,
     ) -> UsbIpResult<Self> {
         let usb = UsbDeviceManager::with_backend(backend);
-        let mdns = MdnsAdvertiser::new(config.port).ok();
+        let devices = usb.list_exportable_devices(&config.allowed_vid_pid);
+        let mdns = MdnsAdvertiser::new(config.port, devices).ok();
         Ok(Self { usb: Arc::new(usb), exports: Arc::new(Mutex::new(HashMap::new())), mdns, config })
     }
 
@@ -315,9 +317,20 @@ async fn handle_import(
 
     info!("Client {} wants to import device: {}", peer_addr, busid);
 
-    // Check if device exists
-    let device_entry =
-        usb.get_device_entry(&busid).ok_or_else(|| ErrorKind::DeviceNotFound(busid.clone()))?;
+    // Check if device exists. A missing busid must reply with
+    // `OP_REP_IMPORT` + `STATUS_ST_NODEV` rather than dropping the
+    // socket — the protocol requires a header on every command so the
+    // client can render a real error instead of a transport-level
+    // "connection closed" failure.
+    let device_entry = match usb.get_device_entry(&busid) {
+        Some(e) => e,
+        None => {
+            let header = UsbIpHeader::with_status(OP_REP_IMPORT, STATUS_ST_NODEV);
+            stream.write_all(header.as_bytes()).await?;
+            stream.flush().await?;
+            return Ok(());
+        },
+    };
 
     // Check if already exported
     {
@@ -589,4 +602,59 @@ impl crate::api::RemoteImporter for UnsupportedImporterFallback {
         )))
     }
     fn abort(&self, _busid: &str) {}
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+    use crate::usb_backend::FakeBackend;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpStream;
+    use usbip_core::protocol::UsbIpHeader;
+
+    /// A real `OP_REQ_IMPORT` for an unknown busid must yield an
+    /// `OP_REP_IMPORT` reply carrying `STATUS_ST_NODEV`, not a
+    /// transport-level disconnect. This guards the user-visible
+    /// "server closed connection before sending the reply" failure.
+    #[tokio::test]
+    async fn import_unknown_busid_writes_nodev_reply() {
+        // Empty device table — every busid is "not found".
+        let backend = Box::new(FakeBackend::new(vec![]));
+        let usb = Arc::new(UsbDeviceManager::with_backend(backend));
+        let exports: Arc<Mutex<HashMap<String, (SocketAddr, UsbIpDeviceEntry)>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        // Listen on an ephemeral port, let the client connect, then
+        // hand the resulting TcpStream to handle_import.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, peer) = listener.accept().await.unwrap();
+            handle_import(stream, usb, &exports, false, peer).await.unwrap();
+        });
+
+        // Client: send the 8-byte request header + 32-byte busid "9-9".
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut req = [0u8; 8 + 32];
+        // UsbIpHeader is repr(C, packed); we lay it out manually as
+        // big-endian to match the wire format. version=0x0111, command=OP_REQ_IMPORT, status=0.
+        req[0..2].copy_from_slice(&0x0111u16.to_be_bytes());
+        req[2..4].copy_from_slice(&OP_REQ_IMPORT.to_be_bytes());
+        req[4..8].copy_from_slice(&0i32.to_be_bytes());
+        req[8..12].copy_from_slice(b"9-9\0");
+        client.write_all(&req).await.unwrap();
+
+        // Read the 8-byte reply header.
+        let mut resp = [0u8; 8];
+        client.read_exact(&mut resp).await.unwrap();
+        let header = UsbIpHeader::read_from_prefix(&resp).unwrap().0;
+        assert_eq!(header.command.get(), OP_REP_IMPORT);
+        assert_eq!(header.status.get(), STATUS_ST_NODEV);
+
+        server.await.unwrap();
+    }
 }
