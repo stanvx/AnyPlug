@@ -2,8 +2,8 @@
 //!
 //! This module abstracts the platform-specific mechanism for creating
 //! virtual USB devices that the local OS sees as real hardware. It uses
-//! a trait-based backend pattern: [`VhciDriver`] is the public-facing
-//! wrapper that delegates all operations to a boxed [`VhciBackend`].
+//! a trait-based backend pattern: [`VhciBackend`] is the public-facing
+//! trait, and [`detect_backend`] returns a boxed platform implementation.
 //!
 //! ## Platform Implementations
 //!
@@ -29,12 +29,14 @@ mod vhci_windows;
 
 // ─── VhciBackend Trait ──────────────────────────────────────────
 
-/// Crate-internal trait for platform-specific VHCI operations.
+/// Public trait for platform-specific VHCI operations.
 ///
 /// Every method maps to one logical operation in the USB/IP VHCI
-/// protocol. The trait is `Send + Sync` so that [`VhciDriver`] (which
-/// holds a `Box<dyn VhciBackend>`) remains usable across threads.
-pub(crate) trait VhciBackend: Send + Sync {
+/// protocol. The trait is `Send + Sync` so a `Box<dyn VhciBackend>` is
+/// shareable across the client's forwarding tasks. Exposed publicly so
+/// downstream consumers (tests, third-party clients) can implement their
+/// own backends.
+pub trait VhciBackend: Send + Sync {
     /// Create a virtual USB device from descriptor data.
     fn create_device(
         &self,
@@ -57,94 +59,6 @@ pub(crate) trait VhciBackend: Send + Sync {
 
     /// Remove a virtual device by port number.
     fn remove_device(&self, port: u32) -> UsbIpResult<()>;
-
-    /// Find the first free VHCI port.
-    ///
-    /// Default implementation returns `Ok(0)` — override when the
-    /// platform provides explicit port allocation (e.g. Linux sysfs).
-    #[allow(dead_code)] // platform impls override; Client no longer calls it directly
-    fn find_free_port(&self) -> UsbIpResult<u32> {
-        Ok(0)
-    }
-}
-
-// ─── VhciDriver (public wrapper) ──────────────────────────────────
-
-/// VHCI driver abstraction.
-///
-/// This is the single public entry-point for VHCI operations. It holds
-/// a heap-allocated, platform-specific backend and delegates all
-/// methods to it.
-pub struct VhciDriver {
-    backend: Box<dyn VhciBackend>,
-}
-
-impl VhciDriver {
-    /// Create a new VHCI driver using the platform's native backend.
-    pub fn new() -> UsbIpResult<Self> {
-        let backend = detect_backend()?;
-        Ok(Self { backend })
-    }
-
-    /// Create a virtual USB device from descriptor data.
-    pub fn create_device(
-        &self,
-        entry: &UsbIpDeviceEntry,
-        descriptors: &[u8],
-    ) -> UsbIpResult<VhciDevice> {
-        self.backend.create_device(entry, descriptors)
-    }
-
-    /// Complete a URB (USBIP_RET_SUBMIT received from server).
-    pub fn complete_urb(
-        &self,
-        seqnum: u32,
-        devid: u32,
-        status: i32,
-        actual_length: u32,
-        data: &[u8],
-    ) -> UsbIpResult<()> {
-        self.backend.complete_urb(seqnum, devid, status, actual_length, data)
-    }
-
-    /// Cancel an in-flight URB (USBIP_RET_UNLINK received).
-    pub fn cancel_urb(&self, seqnum: u32, devid: u32) -> UsbIpResult<()> {
-        self.backend.cancel_urb(seqnum, devid)
-    }
-
-    /// Remove a virtual device.
-    pub fn remove_device(&self, port: u32) -> UsbIpResult<()> {
-        self.backend.remove_device(port)
-    }
-}
-
-impl VhciBackend for VhciDriver {
-    fn create_device(
-        &self,
-        entry: &UsbIpDeviceEntry,
-        descriptors: &[u8],
-    ) -> UsbIpResult<VhciDevice> {
-        self.backend.create_device(entry, descriptors)
-    }
-
-    fn complete_urb(
-        &self,
-        seqnum: u32,
-        devid: u32,
-        status: i32,
-        actual_length: u32,
-        data: &[u8],
-    ) -> UsbIpResult<()> {
-        self.backend.complete_urb(seqnum, devid, status, actual_length, data)
-    }
-
-    fn cancel_urb(&self, seqnum: u32, devid: u32) -> UsbIpResult<()> {
-        self.backend.cancel_urb(seqnum, devid)
-    }
-
-    fn remove_device(&self, port: u32) -> UsbIpResult<()> {
-        self.backend.remove_device(port)
-    }
 }
 
 // ─── VhciDevice ─────────────────────────────────────────────────
@@ -162,7 +76,7 @@ pub struct VhciDevice {
 // ─── Backend Factory ────────────────────────────────────────────
 
 /// Detect the platform and return the appropriate backend.
-fn detect_backend() -> UsbIpResult<Box<dyn VhciBackend>> {
+pub(crate) fn detect_backend() -> UsbIpResult<Box<dyn VhciBackend>> {
     #[cfg(target_os = "linux")]
     {
         let inner = vhci_linux::LinuxVhciBackend::new()?;
@@ -189,7 +103,7 @@ pub(crate) struct MockVhciBackend {
     /// Track created devices.
     devices: Mutex<Vec<VhciDevice>>,
     /// Track completed URBs.
-    pub(crate) urbs: Mutex<Vec<(u32, u32, i32, u32, Vec<u8>)>>,
+    urbs: Mutex<Vec<(u32, u32, i32, u32, Vec<u8>)>>,
     /// Next port number to assign.
     next_port: Mutex<u32>,
 }
@@ -202,6 +116,13 @@ impl MockVhciBackend {
             urbs: Mutex::new(Vec::new()),
             next_port: Mutex::new(0),
         }
+    }
+
+    /// Snapshot of URBs recorded by `complete_urb`. Returns `(seqnum,
+    /// devid, status, actual_length, data)` tuples in completion order.
+    /// Cloned so tests can assert without holding the mutex.
+    pub(crate) fn recorded_urbs(&self) -> Vec<(u32, u32, i32, u32, Vec<u8>)> {
+        self.urbs.lock().unwrap().clone()
     }
 }
 
@@ -247,11 +168,6 @@ impl VhciBackend for MockVhciBackend {
     fn remove_device(&self, _port: u32) -> UsbIpResult<()> {
         Ok(())
     }
-
-    fn find_free_port(&self) -> UsbIpResult<u32> {
-        let port = *self.next_port.lock().unwrap();
-        Ok(port)
-    }
 }
 
 // ─── Tests ──────────────────────────────────────────────────────
@@ -294,7 +210,7 @@ mod tests {
 
         backend.complete_urb(42, 0, 0, 4, &data).unwrap();
 
-        let urbs = backend.urbs.lock().unwrap();
+        let urbs = backend.recorded_urbs();
         assert_eq!(urbs.len(), 1);
         assert_eq!(urbs[0].0, 42); // seqnum
         assert_eq!(urbs[0].1, 0); // devid
@@ -318,18 +234,5 @@ mod tests {
         assert_eq!(d2.port, 2);
 
         assert_eq!(backend.devices.lock().unwrap().len(), 3);
-
-        // find_free_port should return the next port (3)
-        assert_eq!(backend.find_free_port().unwrap(), 3);
-    }
-
-    #[test]
-    fn test_vhci_driver_new_on_current_platform() {
-        let result = VhciDriver::new();
-        match result {
-            Ok(_) => {}, // platform is supported
-            Err(ref e) if matches!(e.kind(), ErrorKind::NotSupported(_)) => {}, // platform is unsupported
-            Err(e) => panic!("unexpected error: {}", e),
-        }
     }
 }

@@ -43,6 +43,20 @@ impl LinuxVhciBackend {
 
         Ok(Self { sysfs_path: vhci_path, num_ports })
     }
+
+    /// Scan `sysfs/status` for the first port line that is not attached.
+    /// Returns `0` if no status file or no free port is found.
+    fn first_free_port_in_sysfs(&self) -> u32 {
+        let status_path = self.sysfs_path.join("status");
+        let status = fs::read_to_string(&status_path).unwrap_or_default();
+        for (port, line) in status.lines().enumerate() {
+            if line.contains("Port") && !line.contains("Attached") {
+                return port as u32;
+            }
+        }
+        warn!("No free VHCI ports found, attempting port 0");
+        0
+    }
 }
 
 impl VhciBackend for LinuxVhciBackend {
@@ -51,7 +65,7 @@ impl VhciBackend for LinuxVhciBackend {
         entry: &usbip_core::protocol::UsbIpDeviceEntry,
         _descriptors: &[u8],
     ) -> UsbIpResult<VhciDevice> {
-        let port = self.find_free_port()?;
+        let port = self.first_free_port_in_sysfs();
         let attach_path = self.sysfs_path.join("attach");
         let devid = port;
         let speed = entry.speed_val();
@@ -105,17 +119,5 @@ impl VhciBackend for LinuxVhciBackend {
         fs::write(&detach_path, detach_str)?;
         info!("VHCI: detached device at port {}", port);
         Ok(())
-    }
-
-    fn find_free_port(&self) -> UsbIpResult<u32> {
-        let status_path = self.sysfs_path.join("status");
-        let status = fs::read_to_string(&status_path).unwrap_or_default();
-        for (port, line) in status.lines().enumerate() {
-            if line.contains("Port") && !line.contains("Attached") {
-                return Ok(port as u32);
-            }
-        }
-        warn!("No free VHCI ports found, attempting port 0");
-        Ok(0)
     }
 }

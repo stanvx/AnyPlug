@@ -61,3 +61,22 @@ pub fn serialize_reply_into(
 
     buf.len() - start
 }
+
+/// Serialize a `UsbIpRetSubmit` body + optional data payload into a new
+/// `Vec<u8>`, prefixed by an 8-byte `UsbIpHeader` with command = `USBIP_RET_SUBMIT`.
+///
+/// Returns `[header (8) | ret (44) | data (variable)]`. Use this when you have
+/// already-constructed `UsbIpRetSubmit` (e.g. from a server response) and want to
+/// re-encode it for replay or test fixtures.
+pub fn serialize_ret_submit(ret: &UsbIpRetSubmit, data: &[u8]) -> Vec<u8> {
+    let total_len = UsbIpHeader::SIZE + UsbIpRetSubmit::HEADER_SIZE + data.len();
+    let mut buf = Vec::with_capacity(total_len);
+
+    let header = UsbIpHeader::new(USBIP_RET_SUBMIT);
+    buf.extend_from_slice(header.as_bytes());
+
+    buf.extend_from_slice(ret.as_bytes());
+    buf.extend_from_slice(data);
+
+    buf
+}

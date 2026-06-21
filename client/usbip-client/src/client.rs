@@ -39,7 +39,7 @@ use usbip_core::urb::*;
 
 use crate::discovery::MdnsBrowser;
 use crate::reconnect::{ReconnectConfig, ReconnectDecision, ReconnectState};
-use crate::vhci::{VhciBackend, VhciDriver};
+use crate::vhci::{detect_backend, VhciBackend};
 
 /// Client configuration.
 #[derive(Debug, Clone)]
@@ -85,15 +85,12 @@ struct ActiveConnection {
 
 impl Client {
     pub fn new(config: ClientConfig) -> UsbIpResult<Self> {
-        let vhci = VhciDriver::new()?;
-        Self::new_with_vhci(config, Arc::new(vhci))
+        let vhci = Arc::from(detect_backend()?);
+        Self::new_with_vhci(config, vhci)
     }
 
     /// Construct a client with an injected VHCI backend (test seam).
-    pub(crate) fn new_with_vhci(
-        config: ClientConfig,
-        vhci: Arc<dyn VhciBackend>,
-    ) -> UsbIpResult<Self> {
+    pub fn new_with_vhci(config: ClientConfig, vhci: Arc<dyn VhciBackend>) -> UsbIpResult<Self> {
         Ok(Self { config, vhci, connections: Mutex::new(Vec::new()) })
     }
 
@@ -393,6 +390,11 @@ async fn tcp_connect_and_import(
     busid: &str,
     tcp_nodelay: bool,
 ) -> UsbIpResult<TcpStream> {
+    // Performs the OP_REQ_IMPORT handshake and the 312-byte device-entry
+    // read. Descriptor parsing happens in `do_import`. The only caller
+    // (`urb_forwarding_task`) never reads descriptors; any extra byte read
+    // here would shred URBs the server may have queued immediately after
+    // the device-entry reply (H1 regression — never reintroduce).
     let mut stream = TcpStream::connect(addr).await?;
     if tcp_nodelay {
         stream.set_nodelay(true)?;
@@ -520,14 +522,14 @@ async fn urb_forwarding_loop(stream: &mut TcpStream, vhci: &dyn VhciBackend) -> 
 
 #[cfg(test)]
 mod tests {
-    //! RED tests for issue #28: `Client::new_with_vhci` injection seam.
+    //! GREEN tests for issue #28: `Client::new_with_vhci` injection seam.
     //!
-    //! These tests assert the contract that the GREEN step must satisfy:
-    //! a `Client` constructed via `new_with_vhci` must route its VHCI
-    //! operations to the supplied backend, not to the platform default.
-    //! The tests drive the client through a real `TcpListener` playing
-    //! the role of a USB/IP server, send a crafted `USBIP_RET_SUBMIT`,
-    //! and observe the result on `MockVhciBackend`.
+    //! These tests verify the injection seam contract: a `Client`
+    //! constructed via `new_with_vhci` must route its VHCI operations to
+    //! the supplied backend, not to the platform default.  The tests
+    //! drive the client through a real `TcpListener` playing the role
+    //! of a USB/IP server, send a crafted `USBIP_RET_SUBMIT`, and
+    //! observe the result on `MockVhciBackend`.
 
     use super::*;
 
@@ -537,8 +539,9 @@ mod tests {
     use tokio::net::TcpListener;
 
     use usbip_core::protocol::{
-        UsbIpHeader, OP_REP_IMPORT, OP_REQ_IMPORT, STATUS_SUCCESS, URB_DIR_IN, USBIP_RET_SUBMIT,
+        UsbIpHeader, OP_REP_IMPORT, OP_REQ_IMPORT, STATUS_SUCCESS, URB_DIR_IN,
     };
+    use usbip_core::serialize_ret_submit;
     use usbip_core::urb::UsbIpRetSubmit;
 
     use crate::vhci::MockVhciBackend;
@@ -553,8 +556,8 @@ mod tests {
         entry
     }
 
-    /// Minimal end-to-end RED: construct via `new_with_vhci`, drive a
-    /// single `USBIP_RET_SUBMIT` through `run_urb_forwarding`, and
+    /// Minimal end-to-end GREEN test: construct via `new_with_vhci`, drive
+    /// a single `USBIP_RET_SUBMIT` through `run_urb_forwarding`, and
     /// confirm the injected mock recorded the completion.
     #[tokio::test]
     async fn test_new_with_vhci_routes_complete_urb_to_injected_backend() {
@@ -611,13 +614,8 @@ mod tests {
                 setup: [0u8; 8],
             };
 
-            // Hand-encode: the client reads an 8-byte UsbIpHeader first,
-            // then UsbIpRetSubmit::HEADER_SIZE (44) bytes, then data.
-            let mut msg = Vec::with_capacity(8 + UsbIpRetSubmit::HEADER_SIZE + 4);
-            let hdr = UsbIpHeader::new(USBIP_RET_SUBMIT);
-            msg.extend_from_slice(hdr.as_bytes());
-            msg.extend_from_slice(ret.as_bytes());
-            msg.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+            // Encode via the canonical usbip-core helper.
+            let msg = serialize_ret_submit(&ret, &[0xDE, 0xAD, 0xBE, 0xEF]);
             sock.write_all(&msg).await.unwrap();
         });
 
@@ -635,7 +633,7 @@ mod tests {
         server.await.unwrap();
 
         // ── Observable: the injected mock recorded the completion ──
-        let urbs = mock.urbs.lock().unwrap();
+        let urbs = mock.recorded_urbs();
         assert_eq!(urbs.len(), 1, "expected exactly one completed URB on the injected mock");
         let (seqnum, devid, status, actual_len, data) = &urbs[0];
         assert_eq!(*seqnum, 0x00C0_FFEE);
@@ -645,7 +643,8 @@ mod tests {
         assert_eq!(data, &vec![0xDE, 0xAD, 0xBE, 0xEF]);
     }
 
-    /// RED for the 18-byte "drive-by fix" in `tcp_connect_and_import`.
+    /// Regression test for H1: the 18-byte "drive-by fix" in
+    /// `tcp_connect_and_import` (since reverted).
     ///
     /// A real USB/IP server may queue a URB on the wire immediately after
     /// the device-entry reply. The handshake must consume only what it
@@ -709,11 +708,8 @@ mod tests {
                 error_count: zerocopy::byteorder::U32::new(0),
                 setup: [0u8; 8],
             };
-            let mut msg = Vec::with_capacity(8 + UsbIpRetSubmit::HEADER_SIZE + 4);
-            let ret_hdr = UsbIpHeader::new(USBIP_RET_SUBMIT);
-            msg.extend_from_slice(ret_hdr.as_bytes());
-            msg.extend_from_slice(ret.as_bytes());
-            msg.extend_from_slice(&[0xCA, 0xFE, 0xBA, 0xBE]);
+            // Encode via the canonical usbip-core helper.
+            let msg = serialize_ret_submit(&ret, &[0xCA, 0xFE, 0xBA, 0xBE]);
             sock.write_all(&msg).await.unwrap();
 
             // Half-close so the client's URB loop sees EOF after it
@@ -735,7 +731,7 @@ mod tests {
         server.await.unwrap();
 
         // The injected mock must have recorded the queued URB intact.
-        let urbs = mock.urbs.lock().unwrap();
+        let urbs = mock.recorded_urbs();
         assert_eq!(
             urbs.len(),
             1,

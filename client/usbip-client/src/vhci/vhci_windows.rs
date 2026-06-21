@@ -28,7 +28,8 @@ impl VhciBackend for WindowsVhciBackend {
         entry: &UsbIpDeviceEntry,
         descriptors: &[u8],
     ) -> UsbIpResult<VhciDevice> {
-        let port = self.find_free_port()?;
+        // Windows has no sysfs-style port allocator; default to port 0.
+        let port = 0u32;
         let devid = port;
 
         // Build descriptor block for the driver

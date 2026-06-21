@@ -64,6 +64,7 @@ pub use urb::UsbIpRetUnlink;
 
 pub use reply::serialize_reply;
 pub use reply::serialize_reply_into;
+pub use reply::serialize_ret_submit;
 
 /// Default USB/IP TCP port (IANA-registered).
 pub const USBIP_PORT: u16 = 3240;
