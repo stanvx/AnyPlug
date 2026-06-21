@@ -98,3 +98,24 @@ Focus coverage efforts on:
 2. Error mapping (`rusb_to_urb_status` and friends)
 3. URB buffer pool allocation/deallocation
 4. Crypto key exchange (already partially covered)
+
+## Rust-Specific Patterns
+
+### Why inline `#[cfg(test)] mod tests` (not `tests/*.rs`)
+
+Integration tests in `tests/*.rs` can only see the crate's **public** API. When the unit under test is `pub(crate)` — common for trait abstractions meant to stay inside the workspace — the mock cannot be defined alongside it, and the test must live in the same module that has access to the type.
+
+Rule: if the type you need to mock or exercise is `pub(crate)`, write the test as an inline `#[cfg(test)] mod tests {}` at the bottom of the file that **uses** the mock, not in `tests/`.
+
+### Injection shape: `Arc<dyn Trait>` vs generic `Client<V: Trait>`
+
+When a struct needs a swappable backend, the two shapes look interchangeable but have very different call-site costs:
+
+- `Client<V: VhciBackend>` — type parameter ripples to every constructor, every handler, every test signature. Three CLI handlers all become `Handler<V>`. Compounding.
+- `Client { backend: Arc<dyn VhciBackend + Send + Sync> }` — backend is a runtime object. Handlers stay concrete. Mocking swaps the `Arc` at construction.
+
+Default to `Arc<dyn Trait>` whenever the trait object is held inside a struct. Reserve generics for genuine type-level constraints (e.g. `From`/`Into` bounds, no-std contexts, static dispatch through hot loops). The test seam is preserved; the call sites stay simple.
+
+### `#[allow(dead_code)]` on platform trait methods
+
+When extracting a `Trait` with default implementations, every method is part of the platform contract even if a single caller stops using it. Clippy's `dead_code` lint will flag the unused default. The right fix is `#[allow(dead_code)]` on the method — **not** deleting the method or wiring up a fake caller. Platform traits are consumed by multiple backends; removing a method to silence clippy breaks the contract for the next backend.
