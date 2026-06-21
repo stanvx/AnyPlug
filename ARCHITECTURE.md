@@ -196,6 +196,42 @@ Android TV is the same APK with a different UI module. The `tv/` module provides
 └───────────────────────────────────────┘
 ```
 
+## Client VHCI Backend Abstraction
+
+The client crate abstracts the platform VHCI surface behind a single trait so
+the rest of the client logic (TCP connect, URB dispatch, reconnection) is
+identical across Linux, Windows, and (eventually) macOS DriverKit.
+
+- `vhci::VhciBackend` (`client/usbip-client/src/vhci/mod.rs`) is `pub` and
+  re-exported at the crate root as `usbip_client::VhciBackend`. It exposes
+  `create_device`, `remove_device`, `submit_urb`, `complete_urb`, and
+  `cancel_urb` — the same set of operations the macOS DriverKit `IOUserClient`
+  interface needs (see ADR-004).
+- `Client::new(config)` calls `vhci::detect_backend()` internally to select
+  the platform backend (`VhciLinux` or `VhciWindows`) at runtime. No
+  compile-time platform gate.
+- `Client::new_with_vhci(config, vhci: Arc<dyn VhciBackend>)` is the test
+  injection point. It accepts any `Arc<dyn VhciBackend>` and bypasses
+  `detect_backend()`, so integration tests can run on any host (CI on Linux
+  runners can exercise Windows/macOS codepaths with a mock backend).
+- The canonical wire-encode helper for `USBIP_RET_SUBMIT` messages is
+  `usbip_core::reply::serialize_ret_submit(ret, data) -> Vec<u8>` in
+  `shared/usbip-core/src/reply.rs`. All callers (server, batcher, test
+  fixtures) go through this single function.
+
+**Test surface:**
+
+- `client/usbip-client/tests/injection_seam.rs` — integration test proving
+  `VhciBackend` and `new_with_vhci` are reachable through the crate's
+  public API. Will not compile if either regresses to `pub(crate)`.
+- Inline `#[cfg(test)] mod tests` in `client.rs` and `vhci/mod.rs` cover
+  backend selection, mock backend observation (`MockVhciBackend::recorded_urbs()`),
+  and lifecycle behaviour.
+
+This is the precondition for ADR-004 (macOS DriverKit VHCI): the macOS
+backend is a third `impl VhciBackend`, slotted in without touching
+client-level code.
+
 ## Configuration File
 
 ```toml

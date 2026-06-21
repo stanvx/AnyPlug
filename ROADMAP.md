@@ -138,6 +138,7 @@ not just the original reference hardware. Delivered per PRD #1.
 - [x] Structured JSON test output per gadget (`test`, `status`, `duration_ms`)
 - [x] E2E CI workflow (`.github/workflows/e2e-linux.yml`) with kernel caching + step summary
 - [x] Architecture deepening — VHCI platform seam, busid parsing, parsed descriptors, URB executor seam
+- [x] VHCI backend injection seam promoted to `pub` (issue #28) — `Client::new_with_vhci(config, Arc<dyn VhciBackend>)` enables client-side integration tests on non-Linux/Windows platforms; precondition for ADR-004 (macOS DriverKit)
 - [x] Device-specific debt fully retired — no device-specific constants in generic infrastructure
 - [x] CONTRIBUTING.md fixture capture guide for community descriptor corpus
 
