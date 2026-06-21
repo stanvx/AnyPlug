@@ -432,16 +432,6 @@ async fn tcp_connect_and_import(
     let mut entry_buf = vec![0u8; UsbIpDeviceEntry::SIZE];
     stream.read_exact(&mut entry_buf).await?;
 
-    // Read descriptor tree anchor bytes.
-    // Read a small chunk so we do not slurp the next message (e.g. RET_SUBMIT)
-    // that the server may have already queued on the wire.
-    let mut desc_buf = [0u8; 18];
-    if let Ok(n) = stream.read(&mut desc_buf).await {
-        if n == 0 {
-            return Err(UsbIpError::from(ErrorKind::ConnectionClosed));
-        }
-    }
-
     Ok(stream)
 }
 
@@ -598,14 +588,13 @@ mod tests {
             let entry = make_device_entry_bytes("1-1");
             sock.write_all(&entry).await.unwrap();
 
-            // Send a minimal descriptor tree (just an 18-byte device
-            // descriptor is enough for the loop to read past the import
-            // and start the URB forwarding loop).
-            let mut desc = vec![0u8; 18];
-            desc[0] = 18; // bLength
-            desc[1] = 1; // DEVICE descriptor type
-                         // bcdUSB, bDeviceClass, ... all zero is fine for the loop.
-            sock.write_all(&desc).await.unwrap();
+            // The URB follows the device entry directly. In a real USB/IP
+            // session the device entry is followed by a descriptor tree,
+            // but `run_urb_forwarding` (via `tcp_connect_and_import`) does
+            // NOT read descriptors — descriptor parsing lives in `do_import`.
+            // So the URB forwarding loop expects the URB header right after
+            // the device entry. This mirrors what a busy server would put on
+            // the wire: device entry, then queued RET_SUBMIT.
 
             // Build a USBIP_RET_SUBMIT for an IN transfer with 4 bytes
             // of data, seqnum=0xC0FFEE, devid=0, status=0.
@@ -654,5 +643,114 @@ mod tests {
         assert_eq!(*status, 0);
         assert_eq!(*actual_len, 4);
         assert_eq!(data, &vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    /// RED for the 18-byte "drive-by fix" in `tcp_connect_and_import`.
+    ///
+    /// A real USB/IP server may queue a URB on the wire immediately after
+    /// the device-entry reply. The handshake must consume only what it
+    /// needs to consume — it must NOT swallow bytes that belong to the
+    /// next message. The current implementation reads 18 bytes into a
+    /// local and drops them on the floor, which corrupts the next
+    /// `USBIP_RET_SUBMIT` (it has the same `seqnum` we use here as a
+    /// tripwire: if the mock sees `0xDEADBEEF`, the URB was delivered
+    /// intact; if it sees nothing, the bytes were eaten).
+    #[tokio::test]
+    async fn test_tcp_connect_and_import_does_not_lose_queued_urb_bytes() {
+        let mock = StdArc::new(MockVhciBackend::new());
+        let backend: StdArc<dyn VhciBackend> = mock.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+
+            // 8-byte OP_REQ_IMPORT header.
+            let mut hdr = [0u8; 8];
+            sock.read_exact(&mut hdr).await.unwrap();
+            let cmd = u16::from_be_bytes([hdr[2], hdr[3]]);
+            assert_eq!(cmd, OP_REQ_IMPORT);
+
+            // 32-byte busid.
+            let mut busid = [0u8; 32];
+            sock.read_exact(&mut busid).await.unwrap();
+
+            // OP_REP_IMPORT (status=0). No descriptor tree this time —
+            // the server queues a real URB immediately after the entry,
+            // exactly as a busy server would.
+            let reply = UsbIpHeader::with_status(OP_REP_IMPORT, STATUS_SUCCESS);
+            sock.write_all(reply.as_bytes()).await.unwrap();
+
+            // 312-byte device entry.
+            let entry = make_device_entry_bytes("1-1");
+            sock.write_all(&entry).await.unwrap();
+
+            // Queue a USBIP_RET_SUBMIT immediately — no 18-byte
+            // descriptor chunk in between. The client's handshake
+            // must NOT eat these bytes.
+            //
+            //   8  bytes  UsbIpHeader      (command = USBIP_RET_SUBMIT)
+            //  44  bytes  UsbIpRetSubmit   (seqnum = 0xDEADBEEF, IN, 4-byte payload)
+            //   4  bytes  data             (0xCA 0xFE 0xBA 0xBE)
+            //
+            // seqnum 0xDEADBEEF is the tripwire: if the client drops any
+            // prefix of this 56-byte message, the URB loop will not see
+            // a valid header and the mock will record zero URBs.
+            let ret = UsbIpRetSubmit {
+                seqnum: zerocopy::byteorder::U32::new(0xDEAD_BEEF),
+                devid: zerocopy::byteorder::U32::new(0),
+                direction: zerocopy::byteorder::U32::new(URB_DIR_IN),
+                ep: zerocopy::byteorder::U32::new(0),
+                status: zerocopy::byteorder::U32::new(0),
+                actual_length: zerocopy::byteorder::U32::new(4),
+                start_frame: zerocopy::byteorder::U32::new(0),
+                number_of_packets: zerocopy::byteorder::U32::new(0),
+                error_count: zerocopy::byteorder::U32::new(0),
+                setup: [0u8; 8],
+            };
+            let mut msg = Vec::with_capacity(8 + UsbIpRetSubmit::HEADER_SIZE + 4);
+            let ret_hdr = UsbIpHeader::new(USBIP_RET_SUBMIT);
+            msg.extend_from_slice(ret_hdr.as_bytes());
+            msg.extend_from_slice(ret.as_bytes());
+            msg.extend_from_slice(&[0xCA, 0xFE, 0xBA, 0xBE]);
+            sock.write_all(&msg).await.unwrap();
+
+            // Half-close so the client's URB loop sees EOF after it
+            // drains the URB.
+            sock.shutdown().await.unwrap();
+        });
+
+        let config = ClientConfig { auto_reconnect: false, ..ClientConfig::default() };
+        let client = Client::new_with_vhci(config, backend).expect("new_with_vhci must succeed");
+
+        // Bound the wait so a hung client doesn't stall CI.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.run_urb_forwarding(addr, "1-1"),
+        )
+        .await
+        .expect("run_urb_forwarding timed out");
+
+        server.await.unwrap();
+
+        // The injected mock must have recorded the queued URB intact.
+        let urbs = mock.urbs.lock().unwrap();
+        assert_eq!(
+            urbs.len(),
+            1,
+            "expected exactly one completed URB on the injected mock (got {}); run_urb_forwarding result: {:?}",
+            urbs.len(),
+            result
+        );
+        let (seqnum, devid, status, actual_len, data) = &urbs[0];
+        assert_eq!(
+            *seqnum, 0xDEAD_BEEF,
+            "tripwire seqnum proves the URB bytes were not eaten by tcp_connect_and_import"
+        );
+        assert_eq!(*devid, 0);
+        assert_eq!(*status, 0);
+        assert_eq!(*actual_len, 4);
+        assert_eq!(data, &vec![0xCA, 0xFE, 0xBA, 0xBE]);
     }
 }
