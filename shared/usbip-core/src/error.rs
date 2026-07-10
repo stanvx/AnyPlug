@@ -40,6 +40,43 @@ impl fmt::Display for ErrorCategory {
 /// UUIDv7 (time-ordered) so that log lines are naturally sorted by occurrence.
 pub type CorrelationId = Uuid;
 
+/// Platform-neutral USB error code.
+///
+/// Owned by `usbip-core` so the shared error type has the same shape on every
+/// target — backend crates (libusb/rusb on desktop, raw errno on Android)
+/// convert their own error type into this one at the backend boundary.
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsbErrorCode {
+    #[error("I/O error")]
+    Io,
+    #[error("invalid parameter")]
+    InvalidParam,
+    #[error("access denied")]
+    Access,
+    #[error("no such device")]
+    NoDevice,
+    #[error("entity not found")]
+    NotFound,
+    #[error("device busy")]
+    Busy,
+    #[error("operation timed out")]
+    Timeout,
+    #[error("overflow")]
+    Overflow,
+    #[error("pipe error")]
+    Pipe,
+    #[error("interrupted")]
+    Interrupted,
+    #[error("out of memory")]
+    NoMem,
+    #[error("not supported")]
+    NotSupported,
+    #[error("bad descriptor")]
+    BadDescriptor,
+    #[error("other USB error")]
+    Other,
+}
+
 /// The specific kind of USB/IP error.
 ///
 /// Each variant maps to a canonical [`ErrorCategory`] via [`ErrorKind::category`].
@@ -48,13 +85,8 @@ pub enum ErrorKind {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[cfg(not(target_os = "android"))]
     #[error("USB error: {0}")]
-    Usb(#[from] rusb::Error),
-
-    #[cfg(target_os = "android")]
-    #[error("USB error: errno={0}")]
-    UsbRaw(i32),
+    Usb(#[from] UsbErrorCode),
 
     #[error("Protocol error: {0}")]
     Protocol(String),
@@ -106,18 +138,14 @@ impl ErrorKind {
                 _ => ErrorCategory::Permanent,
             },
 
-            #[cfg(not(target_os = "android"))]
             ErrorKind::Usb(e) => {
-                // rusb errors that map to a transport retry
-                if matches!(e, rusb::Error::Timeout | rusb::Error::Busy) {
+                // Errors that map to a transport retry.
+                if matches!(e, UsbErrorCode::Timeout | UsbErrorCode::Busy) {
                     ErrorCategory::Transient
                 } else {
                     ErrorCategory::Permanent
                 }
             },
-
-            #[cfg(target_os = "android")]
-            ErrorKind::UsbRaw(_) => ErrorCategory::Permanent,
 
             ErrorKind::DeviceNotFound(_)
             | ErrorKind::DeviceBusy(_)
@@ -238,10 +266,9 @@ impl From<std::io::Error> for UsbIpError {
     }
 }
 
-#[cfg(not(target_os = "android"))]
-impl From<rusb::Error> for UsbIpError {
-    fn from(e: rusb::Error) -> Self {
-        let category = if matches!(e, rusb::Error::Timeout | rusb::Error::Busy) {
+impl From<UsbErrorCode> for UsbIpError {
+    fn from(e: UsbErrorCode) -> Self {
+        let category = if matches!(e, UsbErrorCode::Timeout | UsbErrorCode::Busy) {
             ErrorCategory::Transient
         } else {
             ErrorCategory::Permanent
@@ -253,25 +280,23 @@ impl From<rusb::Error> for UsbIpError {
 /// Result alias for USB/IP operations.
 pub type UsbIpResult<T> = Result<T, UsbIpError>;
 
-/// Convert a libusb error to a USB/IP URB status code.
-#[cfg(not(target_os = "android"))]
-pub fn rusb_to_urb_status(err: &rusb::Error) -> i32 {
-    use rusb::Error;
+/// Convert a platform-neutral USB error code to a USB/IP URB status code.
+pub fn usb_error_to_urb_status(err: &UsbErrorCode) -> i32 {
     match err {
-        Error::Io => -5,            // -EIO
-        Error::InvalidParam => -22, // -EINVAL
-        Error::Access => -1,        // -EPERM
-        Error::NoDevice => -19,     // -ENODEV
-        Error::NotFound => -2,      // -ENOENT
-        Error::Busy => -16,         // -EBUSY
-        Error::Timeout => -62,      // -ETIME
-        Error::Overflow => -75,     // -EOVERFLOW
-        Error::Pipe => -32,         // -EPIPE
-        Error::Interrupted => -4,   // -EINTR
-        Error::NoMem => -12,        // -ENOMEM
-        Error::NotSupported => -95, // -EOPNOTSUPP
-        Error::Other => -5,         // -EIO
-        _ => -5,
+        UsbErrorCode::Io => -5,            // -EIO
+        UsbErrorCode::InvalidParam => -22, // -EINVAL
+        UsbErrorCode::Access => -1,        // -EPERM
+        UsbErrorCode::NoDevice => -19,     // -ENODEV
+        UsbErrorCode::NotFound => -2,      // -ENOENT
+        UsbErrorCode::Busy => -16,         // -EBUSY
+        UsbErrorCode::Timeout => -62,      // -ETIME
+        UsbErrorCode::Overflow => -75,     // -EOVERFLOW
+        UsbErrorCode::Pipe => -32,         // -EPIPE
+        UsbErrorCode::Interrupted => -4,   // -EINTR
+        UsbErrorCode::NoMem => -12,        // -ENOMEM
+        UsbErrorCode::NotSupported => -95, // -EOPNOTSUPP
+        UsbErrorCode::BadDescriptor => -5, // -EIO
+        UsbErrorCode::Other => -5,         // -EIO
     }
 }
 
@@ -378,8 +403,7 @@ mod tests {
             ErrorKind::Timeout,
             ErrorKind::ConnectionClosed,
             ErrorKind::Io(std::io::Error::new(std::io::ErrorKind::WouldBlock, "test")),
-            #[cfg(not(target_os = "android"))]
-            ErrorKind::Usb(rusb::Error::Timeout),
+            ErrorKind::Usb(UsbErrorCode::Timeout),
         ];
         for kind in kinds {
             let cat = kind.category();
@@ -415,23 +439,22 @@ mod tests {
         }
     }
 
-    // ── Backward compat: rusb_to_urb_status ────────────────
+    // ── usb_error_to_urb_status ─────────────────────────────
 
-    #[cfg(not(target_os = "android"))]
     #[test]
-    fn test_rusb_to_urb_status_unchanged() {
-        assert_eq!(rusb_to_urb_status(&rusb::Error::Io), -5);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::InvalidParam), -22);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::Access), -1);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::NoDevice), -19);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::NotFound), -2);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::Busy), -16);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::Timeout), -62);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::Overflow), -75);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::Pipe), -32);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::Interrupted), -4);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::NoMem), -12);
-        assert_eq!(rusb_to_urb_status(&rusb::Error::NotSupported), -95);
+    fn test_usb_error_to_urb_status_unchanged() {
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::Io), -5);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::InvalidParam), -22);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::Access), -1);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::NoDevice), -19);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::NotFound), -2);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::Busy), -16);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::Timeout), -62);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::Overflow), -75);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::Pipe), -32);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::Interrupted), -4);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::NoMem), -12);
+        assert_eq!(usb_error_to_urb_status(&UsbErrorCode::NotSupported), -95);
     }
 
     // ── Implements std::error::Error (backward compat) ─────

@@ -13,6 +13,30 @@ use usbip_core::error::*;
 use usbip_core::protocol::{UsbIpDeviceEntry, U16BE, U32BE};
 use usbip_core::urb::UsbIpCmdSubmit;
 
+/// Map a libusb (rusb) error onto the platform-neutral [`UsbErrorCode`].
+///
+/// This is the boundary where the rusb dependency stops — nothing above
+/// `usb_backend.rs` should see `rusb::Error` directly.
+fn map_usb_err(e: rusb::Error) -> UsbIpError {
+    let code = match e {
+        rusb::Error::Io => UsbErrorCode::Io,
+        rusb::Error::InvalidParam => UsbErrorCode::InvalidParam,
+        rusb::Error::Access => UsbErrorCode::Access,
+        rusb::Error::NoDevice => UsbErrorCode::NoDevice,
+        rusb::Error::NotFound => UsbErrorCode::NotFound,
+        rusb::Error::Busy => UsbErrorCode::Busy,
+        rusb::Error::Timeout => UsbErrorCode::Timeout,
+        rusb::Error::Overflow => UsbErrorCode::Overflow,
+        rusb::Error::Pipe => UsbErrorCode::Pipe,
+        rusb::Error::Interrupted => UsbErrorCode::Interrupted,
+        rusb::Error::NoMem => UsbErrorCode::NoMem,
+        rusb::Error::NotSupported => UsbErrorCode::NotSupported,
+        rusb::Error::BadDescriptor => UsbErrorCode::BadDescriptor,
+        _ => UsbErrorCode::Other,
+    };
+    UsbIpError::from(code)
+}
+
 /// Result of a single URB transfer.
 #[derive(Debug, Clone)]
 pub struct UrbTransferResult {
@@ -45,12 +69,12 @@ pub struct LibusbBackend {
 
 impl LibusbBackend {
     pub fn new() -> UsbIpResult<Self> {
-        let context = Context::new()?;
+        let context = Context::new().map_err(map_usb_err)?;
         Ok(Self { context, handles: Mutex::new(HashMap::new()) })
     }
 
     fn find_device(&self, busnum: u8, devnum: u8) -> UsbIpResult<Device<Context>> {
-        let devices = self.context.devices()?;
+        let devices = self.context.devices().map_err(map_usb_err)?;
         for device in devices.iter() {
             if device.bus_number() == busnum && device.address() == devnum {
                 return Ok(device);
@@ -121,8 +145,8 @@ impl UsbBackend for LibusbBackend {
     fn claim_device(&self, busid: &str) -> UsbIpResult<()> {
         let (busnum, devnum) = parse_busid(busid)?;
         let device = self.find_device(busnum, devnum)?;
-        let handle = device.open()?;
-        let config = device.config_descriptor(0)?;
+        let handle = device.open().map_err(map_usb_err)?;
+        let config = device.config_descriptor(0).map_err(map_usb_err)?;
         for iface_idx in 0..config.num_interfaces() {
             let iface_num = config
                 .interfaces()
@@ -131,7 +155,7 @@ impl UsbBackend for LibusbBackend {
                 .map(|d| d.interface_number());
             if let Some(num) = iface_num {
                 let _ = handle.detach_kernel_driver(num);
-                handle.claim_interface(num)?;
+                handle.claim_interface(num).map_err(map_usb_err)?;
             }
         }
         self.handles.lock().unwrap().insert(busid.to_string(), (handle, true));
@@ -141,11 +165,11 @@ impl UsbBackend for LibusbBackend {
     fn get_descriptor_tree(&self, busid: &str) -> UsbIpResult<Vec<u8>> {
         let (busnum, devnum) = parse_busid(busid)?;
         let device = self.find_device(busnum, devnum)?;
-        let desc = device.device_descriptor()?;
+        let desc = device.device_descriptor().map_err(map_usb_err)?;
         let mut tree = Vec::new();
         tree.extend_from_slice(&desc_to_bytes(&desc));
         for config_idx in 0..desc.num_configurations() {
-            let config = device.config_descriptor(config_idx)?;
+            let config = device.config_descriptor(config_idx).map_err(map_usb_err)?;
             let bm_attributes = if config.self_powered() { 0x40 } else { 0 }
                 | if config.remote_wakeup() { 0x20 } else { 0 };
             let desc_bytes = [
@@ -220,35 +244,25 @@ impl UsbBackend for LibusbBackend {
             let w_length = u16::from_le_bytes([setup_packet[6], setup_packet[7]]);
             if is_in {
                 let mut buf = vec![0u8; w_length as usize];
-                let len = handle.read_control(
-                    bm_request_type,
-                    b_request,
-                    w_value,
-                    w_index,
-                    &mut buf,
-                    timeout,
-                )?;
+                let len = handle
+                    .read_control(bm_request_type, b_request, w_value, w_index, &mut buf, timeout)
+                    .map_err(map_usb_err)?;
                 buf.truncate(len);
                 Ok(UrbTransferResult { status: 0, actual_length: len as u32, data: buf })
             } else {
-                let len = handle.write_control(
-                    bm_request_type,
-                    b_request,
-                    w_value,
-                    w_index,
-                    out_data,
-                    timeout,
-                )?;
+                let len = handle
+                    .write_control(bm_request_type, b_request, w_value, w_index, out_data, timeout)
+                    .map_err(map_usb_err)?;
                 Ok(UrbTransferResult { status: 0, actual_length: len as u32, data: Vec::new() })
             }
         } else if is_in {
             let max_size = cmd.data_len().max(512) as usize;
             let mut buf = vec![0u8; max_size];
-            let len = handle.read_bulk(ep_addr, &mut buf, timeout)?;
+            let len = handle.read_bulk(ep_addr, &mut buf, timeout).map_err(map_usb_err)?;
             buf.truncate(len);
             Ok(UrbTransferResult { status: 0, actual_length: len as u32, data: buf })
         } else {
-            let len = handle.write_bulk(ep_addr, out_data, timeout)?;
+            let len = handle.write_bulk(ep_addr, out_data, timeout).map_err(map_usb_err)?;
             Ok(UrbTransferResult { status: 0, actual_length: len as u32, data: Vec::new() })
         }
     }

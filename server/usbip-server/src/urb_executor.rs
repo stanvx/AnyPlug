@@ -51,7 +51,7 @@ impl UrbExecutor {
             },
             Err(e) => {
                 let urb_status = match e.kind() {
-                    ErrorKind::Usb(ref rusb_err) => rusb_to_urb_status(rusb_err),
+                    ErrorKind::Usb(ref code) => usb_error_to_urb_status(code),
                     ErrorKind::DeviceNotFound(_) => -19, // -ENODEV
                     ErrorKind::Timeout => -62,           // -ETIME
                     _ => -5,                             // -EIO

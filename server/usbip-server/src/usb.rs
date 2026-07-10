@@ -155,11 +155,12 @@ mod tests {
     }
 
     #[test]
-    fn test_rusb_to_urb_status_mapping() {
-        assert_eq!(usbip_core::error::rusb_to_urb_status(&rusb::Error::Io), -5);
-        assert_eq!(usbip_core::error::rusb_to_urb_status(&rusb::Error::Timeout), -62);
-        assert_eq!(usbip_core::error::rusb_to_urb_status(&rusb::Error::NoDevice), -19);
-        assert_eq!(usbip_core::error::rusb_to_urb_status(&rusb::Error::NotSupported), -95);
+    fn test_usb_error_to_urb_status_mapping() {
+        use usbip_core::error::UsbErrorCode;
+        assert_eq!(usbip_core::error::usb_error_to_urb_status(&UsbErrorCode::Io), -5);
+        assert_eq!(usbip_core::error::usb_error_to_urb_status(&UsbErrorCode::Timeout), -62);
+        assert_eq!(usbip_core::error::usb_error_to_urb_status(&UsbErrorCode::NoDevice), -19);
+        assert_eq!(usbip_core::error::usb_error_to_urb_status(&UsbErrorCode::NotSupported), -95);
     }
 
     /// The `with_backend` constructor accepts any `Box<dyn UsbBackend>`.
