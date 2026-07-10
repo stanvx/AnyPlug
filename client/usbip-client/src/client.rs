@@ -438,26 +438,34 @@ async fn tcp_connect_and_import(
 }
 
 /// Main URB forwarding loop — bidirectional proxy between VHCI and server.
+///
+/// Reads whole USB/IP messages via the shared `usbip_core::wire` codec —
+/// the same raw, unprefixed framing the server's plaintext `Wire::Plain`
+/// now writes. Previously this loop hand-rolled its own per-command reads
+/// while the server wrapped replies in a 4-byte length prefix; the two
+/// never agreed on message boundaries in plaintext mode.
 async fn urb_forwarding_loop(stream: &mut TcpStream, vhci: &dyn VhciBackend) -> UsbIpResult<()> {
-    let mut header_buf = [0u8; 8];
-
     loop {
-        // Read from server
-        tokio::select! {
-            result = stream.read_exact(&mut header_buf) => {
-                if result.is_err() {
-                    break; // server disconnected
+        let frame = tokio::select! {
+            result = usbip_core::wire::read_message(stream) => {
+                match result {
+                    Ok(f) => f,
+                    Err(_) => break, // server disconnected
                 }
             }
             _ = tokio::signal::ctrl_c() => {
                 break;
             }
-        }
+        };
 
-        let header = match UsbIpHeader::read_from_prefix(&header_buf) {
+        if frame.len() < UsbIpHeader::SIZE {
+            break;
+        }
+        let header = match UsbIpHeader::read_from_prefix(&frame[..UsbIpHeader::SIZE]) {
             Ok((h, _)) => h,
             Err(_) => break,
         };
+        let payload = &frame[UsbIpHeader::SIZE..];
 
         match header.command.get() {
             USBIP_CMD_SUBMIT => {
@@ -465,27 +473,20 @@ async fn urb_forwarding_loop(stream: &mut TcpStream, vhci: &dyn VhciBackend) -> 
                 // in symmetric USB/IP implementations
             },
             USBIP_RET_SUBMIT => {
-                // Read RET_SUBMIT
-                let mut ret_buf = vec![0u8; UsbIpRetSubmit::HEADER_SIZE];
-                stream.read_exact(&mut ret_buf).await?;
-
-                let ret = match UsbIpRetSubmit::read_from_prefix(&ret_buf) {
-                    Ok((r, _)) => r,
-                    Err(_) => {
-                        return Err(UsbIpError::from(ErrorKind::Protocol(
-                            "invalid RET_SUBMIT".into(),
-                        )))
-                    },
-                };
-
-                // Read data if IN transfer
-                let mut in_data = Vec::new();
-                if ret.has_data() {
-                    let data_len = ret.actual_len() as usize;
-                    let mut data = vec![0u8; data_len];
-                    stream.read_exact(&mut data).await?;
-                    in_data = data;
+                if payload.len() < UsbIpRetSubmit::HEADER_SIZE {
+                    return Err(UsbIpError::from(ErrorKind::Protocol("invalid RET_SUBMIT".into())));
                 }
+                let (ret, _) =
+                    UsbIpRetSubmit::read_from_prefix(&payload[..UsbIpRetSubmit::HEADER_SIZE])
+                        .map_err(|_| {
+                            UsbIpError::from(ErrorKind::Protocol("invalid RET_SUBMIT".into()))
+                        })?;
+
+                let in_data = if ret.has_data() {
+                    &payload[UsbIpRetSubmit::HEADER_SIZE..]
+                } else {
+                    &[][..]
+                };
 
                 // Complete the URB on the VHCI side
                 vhci.complete_urb(
@@ -493,21 +494,17 @@ async fn urb_forwarding_loop(stream: &mut TcpStream, vhci: &dyn VhciBackend) -> 
                     ret.devid(),
                     ret.status_val() as i32,
                     ret.actual_len(),
-                    &in_data,
+                    in_data,
                 )?;
             },
             USBIP_RET_UNLINK => {
-                let mut unlink_buf = vec![0u8; UsbIpRetUnlink::SIZE];
-                stream.read_exact(&mut unlink_buf).await?;
-
-                let unlink = match UsbIpRetUnlink::read_from_prefix(&unlink_buf) {
-                    Ok((u, _)) => u,
-                    Err(_) => {
-                        return Err(UsbIpError::from(ErrorKind::Protocol(
-                            "invalid RET_UNLINK".into(),
-                        )))
-                    },
-                };
+                if payload.len() < UsbIpRetUnlink::SIZE {
+                    return Err(UsbIpError::from(ErrorKind::Protocol("invalid RET_UNLINK".into())));
+                }
+                let (unlink, _) = UsbIpRetUnlink::read_from_prefix(&payload[..UsbIpRetUnlink::SIZE])
+                    .map_err(|_| {
+                        UsbIpError::from(ErrorKind::Protocol("invalid RET_UNLINK".into()))
+                    })?;
 
                 vhci.cancel_urb(unlink.seqnum(), unlink.devid())?;
             },

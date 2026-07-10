@@ -19,6 +19,7 @@ pub mod pool;
 pub mod protocol;
 pub mod reply;
 pub mod urb;
+pub mod wire;
 
 pub use crypto::*;
 pub use descriptor::*;

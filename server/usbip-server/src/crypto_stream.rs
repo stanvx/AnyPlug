@@ -176,12 +176,12 @@ impl CryptoStream {
 /// A USB/IP message-bearing stream that may be plaintext or AES-256-GCM encrypted.
 ///
 /// Reads and writes whole USB/IP messages (header + payload). The plain
-/// variant performs no encryption — it is a length-prefixed wrapper used
-/// for code paths that should be a no-op on the wire. The encrypted
-/// variant runs the X25519 + AES-256-GCM tunnel.
+/// variant is raw kernel USB/IP framing (no length prefix) via
+/// `usbip_core::wire` — byte-identical to what a stock USB/IP client or
+/// server would put on the wire. The encrypted variant runs the X25519 +
+/// AES-256-GCM tunnel with its own length-prefixed ciphertext framing.
 pub enum Wire {
-    /// Plaintext with a 4-byte length prefix (matches the protocol shape
-    /// so the URB loop is the same in both modes).
+    /// Plaintext, raw kernel USB/IP framing.
     Plain { stream: TcpStream, peer: SocketAddr },
     /// Encrypted tunnel.
     Encrypted(CryptoStream),
@@ -189,7 +189,7 @@ pub enum Wire {
 
 impl Wire {
     /// Wrap an existing TCP stream with no encryption. The URB loop
-    /// reads/writes 4-byte-length-prefixed frames.
+    /// reads/writes raw, unprefixed USB/IP messages.
     pub fn plain(stream: TcpStream, peer: SocketAddr) -> Self {
         Self::Plain { stream, peer }
     }
@@ -212,20 +212,9 @@ impl Wire {
     /// Read one USB/IP message (header + payload).
     pub async fn read_message(&mut self) -> UsbIpResult<Vec<u8>> {
         match self {
-            Self::Plain { stream, .. } => {
-                let mut len_buf = [0u8; 4];
-                stream.read_exact(&mut len_buf).await?;
-                let len = u32::from_be_bytes(len_buf) as usize;
-                if len == 0 || len > ENCRYPTED_MAX {
-                    return Err(UsbIpError::from(ErrorKind::InvalidMessage(format!(
-                        "invalid frame length: {}",
-                        len
-                    ))));
-                }
-                let mut buf = vec![0u8; len];
-                stream.read_exact(&mut buf).await?;
-                Ok(buf)
-            },
+            // Plain framing is raw kernel USB/IP bytes — no length prefix.
+            // ADR-0001 fixes this shape; see `usbip_core::wire`.
+            Self::Plain { stream, .. } => usbip_core::wire::read_message(stream).await,
             Self::Encrypted(c) => c.read_message().await,
         }
     }
@@ -233,14 +222,7 @@ impl Wire {
     /// Write one USB/IP message (header + payload).
     pub async fn write_message(&mut self, plaintext: &[u8]) -> UsbIpResult<()> {
         match self {
-            Self::Plain { stream, .. } => {
-                let mut framed = Vec::with_capacity(4 + plaintext.len());
-                framed.extend_from_slice(&(plaintext.len() as u32).to_be_bytes());
-                framed.extend_from_slice(plaintext);
-                stream.write_all(&framed).await?;
-                stream.flush().await?;
-                Ok(())
-            },
+            Self::Plain { stream, .. } => usbip_core::wire::write_message(stream, plaintext).await,
             Self::Encrypted(c) => c.write_message(plaintext).await,
         }
     }
