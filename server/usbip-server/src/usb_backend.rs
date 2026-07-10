@@ -9,6 +9,9 @@ use tracing::warn;
 
 use rusb::{Context, Device, DeviceHandle, UsbContext};
 
+use usbip_core::descriptor::{
+    ConfigDescriptor, DeviceDescriptor, EndpointDescriptor, InterfaceDescriptor,
+};
 use usbip_core::error::*;
 use usbip_core::protocol::{UsbIpDeviceEntry, U16BE, U32BE};
 use usbip_core::urb::UsbIpCmdSubmit;
@@ -167,54 +170,23 @@ impl UsbBackend for LibusbBackend {
         let device = self.find_device(busnum, devnum)?;
         let desc = device.device_descriptor().map_err(map_usb_err)?;
         let mut tree = Vec::new();
-        tree.extend_from_slice(&desc_to_bytes(&desc));
+        tree.extend_from_slice(&device_to_core(&desc).to_bytes());
         for config_idx in 0..desc.num_configurations() {
             let config = device.config_descriptor(config_idx).map_err(map_usb_err)?;
-            let bm_attributes = if config.self_powered() { 0x40 } else { 0 }
-                | if config.remote_wakeup() { 0x20 } else { 0 };
-            let desc_bytes = [
-                config.length(),
-                config.descriptor_type(),
-                (config.total_length() & 0xFF) as u8,
-                ((config.total_length() >> 8) & 0xFF) as u8,
-                config.num_interfaces(),
-                config.number(),
-                config.description_string_index().unwrap_or(0),
-                bm_attributes,
-                config.max_power() as u8,
-            ];
-            tree.extend_from_slice(&desc_bytes);
+            tree.extend_from_slice(&config_to_core(&config).to_bytes());
             for iface in config.interfaces() {
                 for iface_desc in iface.descriptors() {
-                    let iface_bytes = [
-                        iface_desc.length(),
-                        iface_desc.descriptor_type(),
-                        iface_desc.interface_number(),
-                        iface_desc.setting_number(),
-                        iface_desc.num_endpoints(),
-                        iface_desc.class_code(),
-                        iface_desc.sub_class_code(),
-                        iface_desc.protocol_code(),
-                        iface_desc.description_string_index().unwrap_or(0),
-                    ];
-                    tree.extend_from_slice(&iface_bytes);
+                    tree.extend_from_slice(&interface_to_core(&iface_desc).to_bytes());
                     if iface_desc.class_code() == 0x03 {
+                        // HID class-specific descriptor: not exposed as typed
+                        // fields by rusb, so pass the raw bytes through as-is.
                         let extra = iface_desc.extra();
                         if !extra.is_empty() {
                             tree.extend_from_slice(extra);
                         }
                     }
                     for ep_desc in iface_desc.endpoint_descriptors() {
-                        let ep_bytes = [
-                            ep_desc.length(),
-                            ep_desc.descriptor_type(),
-                            ep_desc.address(),
-                            ep_desc.transfer_type() as u8,
-                            (ep_desc.max_packet_size() & 0xFF) as u8,
-                            ((ep_desc.max_packet_size() >> 8) & 0xFF) as u8,
-                            ep_desc.interval(),
-                        ];
-                        tree.extend_from_slice(&ep_bytes);
+                        tree.extend_from_slice(&endpoint_to_core(&ep_desc).to_bytes());
                     }
                 }
             }
@@ -285,32 +257,70 @@ impl UsbBackend for LibusbBackend {
     }
 }
 
-fn desc_to_bytes(desc: &rusb::DeviceDescriptor) -> Vec<u8> {
+/// Adapt a `rusb::DeviceDescriptor` to core's descriptor type so wire
+/// serialization goes through `usbip_core::descriptor` instead of being
+/// hand-rolled here.
+fn device_to_core(desc: &rusb::DeviceDescriptor) -> DeviceDescriptor {
     let usb_ver = desc.usb_version();
-    let bcd_usb: u16 = (usb_ver.0 as u16) << 8 | usb_ver.1 as u16;
-    vec![
-        desc.length(),
-        desc.descriptor_type(),
-        (bcd_usb & 0xFF) as u8,
-        ((bcd_usb >> 8) & 0xFF) as u8,
-        desc.class_code(),
-        desc.sub_class_code(),
-        desc.protocol_code(),
-        desc.max_packet_size(),
-        (desc.vendor_id() & 0xFF) as u8,
-        ((desc.vendor_id() >> 8) & 0xFF) as u8,
-        (desc.product_id() & 0xFF) as u8,
-        ((desc.product_id() >> 8) & 0xFF) as u8,
-        (u16::from(desc.device_version().0) & 0xFF) as u8,
-        ((u16::from(desc.device_version().0) >> 8) & 0xFF) as u8,
-        desc.manufacturer_string_index().unwrap_or(0),
-        desc.product_string_index().unwrap_or(0),
-        desc.serial_number_string_index().unwrap_or(0),
-        desc.num_configurations(),
-    ]
+    DeviceDescriptor {
+        b_length: desc.length(),
+        b_descriptor_type: desc.descriptor_type(),
+        bcd_usb: (usb_ver.0 as u16) << 8 | usb_ver.1 as u16,
+        b_device_class: desc.class_code(),
+        b_device_sub_class: desc.sub_class_code(),
+        b_device_protocol: desc.protocol_code(),
+        b_max_packet_size0: desc.max_packet_size(),
+        id_vendor: desc.vendor_id(),
+        id_product: desc.product_id(),
+        bcd_device: u16::from(desc.device_version().0),
+        i_manufacturer: desc.manufacturer_string_index().unwrap_or(0),
+        i_product: desc.product_string_index().unwrap_or(0),
+        i_serial_number: desc.serial_number_string_index().unwrap_or(0),
+        b_num_configurations: desc.num_configurations(),
+    }
 }
 
-fn parse_busid(busid: &str) -> UsbIpResult<(u8, u8)> {
+fn config_to_core(config: &rusb::ConfigDescriptor) -> ConfigDescriptor {
+    let bm_attributes = if config.self_powered() { 0x40 } else { 0 }
+        | if config.remote_wakeup() { 0x20 } else { 0 };
+    ConfigDescriptor {
+        b_length: config.length(),
+        b_descriptor_type: config.descriptor_type(),
+        w_total_length: config.total_length(),
+        b_num_interfaces: config.num_interfaces(),
+        b_configuration_value: config.number(),
+        i_configuration: config.description_string_index().unwrap_or(0),
+        bm_attributes,
+        b_max_power: config.max_power() as u8,
+    }
+}
+
+fn interface_to_core(iface_desc: &rusb::InterfaceDescriptor) -> InterfaceDescriptor {
+    InterfaceDescriptor {
+        b_length: iface_desc.length(),
+        b_descriptor_type: iface_desc.descriptor_type(),
+        b_interface_number: iface_desc.interface_number(),
+        b_alternate_setting: iface_desc.setting_number(),
+        b_num_endpoints: iface_desc.num_endpoints(),
+        b_interface_class: iface_desc.class_code(),
+        b_interface_sub_class: iface_desc.sub_class_code(),
+        b_interface_protocol: iface_desc.protocol_code(),
+        i_interface: iface_desc.description_string_index().unwrap_or(0),
+    }
+}
+
+fn endpoint_to_core(ep_desc: &rusb::EndpointDescriptor) -> EndpointDescriptor {
+    EndpointDescriptor {
+        b_length: ep_desc.length(),
+        b_descriptor_type: ep_desc.descriptor_type(),
+        b_endpoint_address: ep_desc.address(),
+        bm_attributes: ep_desc.transfer_type() as u8,
+        w_max_packet_size: ep_desc.max_packet_size(),
+        b_interval: ep_desc.interval(),
+    }
+}
+
+pub(crate) fn parse_busid(busid: &str) -> UsbIpResult<(u8, u8)> {
     let parts: Vec<&str> = busid.split('-').collect();
     if parts.len() < 2 {
         return Err(UsbIpError::from(ErrorKind::DeviceNotFound(busid.into())));

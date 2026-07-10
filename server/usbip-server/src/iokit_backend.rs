@@ -24,6 +24,7 @@ use std::sync::Mutex;
 
 use tracing::{debug, warn};
 
+use usbip_core::descriptor::DeviceDescriptor;
 use usbip_core::error::{ErrorKind, UsbIpError, UsbIpResult};
 use usbip_core::protocol::{UsbIpDeviceEntry, U16BE, U32BE};
 use usbip_core::urb::UsbIpCmdSubmit;
@@ -499,22 +500,25 @@ unsafe fn get_descriptor_tree_from_iokit(busid: &str) -> UsbIpResult<Vec<u8>> {
         return Err(UsbIpError::from(ErrorKind::DeviceNotFound(busid.into())));
     }
 
-    // Return a placeholder device descriptor
-    Ok(vec![
-        0x12, 0x01, // Length=18, Type=Device
-        0x00, 0x02, // USB 2.0 (bcdUSB)
-        0x00, // Class
-        0x00, // SubClass
-        0x00, // Protocol
-        0x40, // Max packet size = 64
-        0x00, 0x00, // VID (placeholder)
-        0x00, 0x00, // PID (placeholder)
-        0x00, 0x01, // bcdDevice
-        0x00, // Manufacturer string index
-        0x00, // Product string index
-        0x00, // Serial string index
-        0x01, // Num configurations
-    ])
+    // Return a placeholder device descriptor, serialized through core so the
+    // wire layout lives in one place.
+    let placeholder = DeviceDescriptor {
+        b_length: DeviceDescriptor::SIZE as u8,
+        b_descriptor_type: 0x01,
+        bcd_usb: 0x0200, // USB 2.0
+        b_device_class: 0,
+        b_device_sub_class: 0,
+        b_device_protocol: 0,
+        b_max_packet_size0: 64,
+        id_vendor: 0,
+        id_product: 0,
+        bcd_device: 0x0100,
+        i_manufacturer: 0,
+        i_product: 0,
+        i_serial_number: 0,
+        b_num_configurations: 1,
+    };
+    Ok(placeholder.to_bytes().to_vec())
 }
 
 // CFNumber types (from CFNumber.h)
