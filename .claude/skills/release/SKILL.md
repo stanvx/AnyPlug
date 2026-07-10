@@ -10,40 +10,23 @@ The release is tag-driven — pushing a `v*` tag triggers `.github/workflows/rel
 
 ### Pre-flight Checks
 
-Run these BEFORE bumping the version. **On non-Windows hosts, exclude the `anyplug` (Windows) crate** — it has Windows-only FFI bindings that don't compile on Linux. This mirrors the project's CI behavior (see CLAUDE.md "Gotchas Claude gets wrong without this").
+Run these BEFORE bumping the version. The `anyplug` (Windows) crate is always excluded — it has Windows-only FFI bindings that don't compile on Linux/macOS, mirroring CI (see CLAUDE.md gotchas). The Windows EXE build is verified in the GitHub Actions release workflow (`windows-latest` runner, MSVC), not in local pre-flight — see "Known Caveats" below.
 
 ```bash
-# Detect host platform
-case "$(uname -s)" in
-  MINGW*|CYGWIN*|MSYS*) ON_WINDOWS=true ;;
-  *) ON_WINDOWS=false ;;
-esac
-case "${OS:-}" in
-  Windows_NT) ON_WINDOWS=true ;;
-esac
-
-# On non-Windows hosts, exclude the `anyplug` (Windows) crate
-WORKSPACE_EXCLUDES=()
-if [ "$ON_WINDOWS" = false ]; then
-  WORKSPACE_EXCLUDES=(--exclude anyplug)
-fi
-
 # 1. Full workspace check
-cargo check --workspace "${WORKSPACE_EXCLUDES[@]}"
+cargo check --workspace --exclude anyplug
 
 # 2. All tests
-cargo test --release --workspace "${WORKSPACE_EXCLUDES[@]}"
+cargo test --release --workspace --exclude anyplug
 
 # 3. Strict lint (treat warnings as errors)
-cargo clippy --workspace "${WORKSPACE_EXCLUDES[@]}" -- -D warnings
+cargo clippy --workspace --exclude anyplug -- -D warnings
 
 # 4. Format check
 cargo fmt --all -- --check
 ```
 
 If any step fails, fix before proceeding.
-
-**On non-Windows hosts:** the `anyplug` (Windows) crate is excluded from the pre-flight. The Windows EXE build is verified in the GitHub Actions release workflow (`windows-latest` runner, MSVC), NOT in local pre-flight. See "Known Caveats" below.
 
 ### Version Bump
 
