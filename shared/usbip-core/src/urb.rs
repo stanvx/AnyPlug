@@ -243,30 +243,6 @@ mod tests {
         }
     }
 
-    /// Construct a synthetic UsbIpRetSubmit with caller-specified parameters.
-    #[allow(dead_code)]
-    pub(crate) fn build_ret_submit(
-        seqnum: u32,
-        devid: u32,
-        direction: u32,
-        ep: u32,
-        status: u32,
-        actual_length: u32,
-    ) -> UsbIpRetSubmit {
-        UsbIpRetSubmit {
-            seqnum: U32BE::new(seqnum),
-            devid: U32BE::new(devid),
-            direction: U32BE::new(direction),
-            ep: U32BE::new(ep),
-            status: U32BE::new(status),
-            actual_length: U32BE::new(actual_length),
-            start_frame: U32BE::new(0),
-            number_of_packets: U32BE::new(0),
-            error_count: U32BE::new(0),
-            setup: [0u8; 8],
-        }
-    }
-
     #[test]
     fn test_hid_interrupt_in_roundtrip() {
         // HID IN (interrupt, endpoint 0x81, direction IN)

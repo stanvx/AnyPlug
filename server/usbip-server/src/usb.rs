@@ -12,12 +12,23 @@ use std::sync::Mutex;
 
 use tracing::debug;
 
-use usbip_core::error::{ErrorKind, UsbIpError, UsbIpResult};
+use usbip_core::error::{usb_error_to_urb_status, ErrorKind, UsbIpError, UsbIpResult};
 use usbip_core::protocol::UsbIpDeviceEntry;
 use usbip_core::urb::UsbIpCmdSubmit;
 
 use crate::api::DeviceLister;
-use crate::usb_backend::{LibusbBackend, UrbTransferResult, UsbBackend};
+use crate::usb_backend::{parse_busid, LibusbBackend, UrbTransferResult, UsbBackend};
+
+/// Result of a single URB execution, mapped to a wire-ready status.
+///
+/// Not a `Result` — even error outcomes produce a valid `UrbResult` so the
+/// caller can always serialise a wire reply via [`usbip_core::reply::serialize_reply`].
+#[derive(Debug, Clone)]
+pub struct UrbResult {
+    pub status: i32,
+    pub actual_length: u32,
+    pub data: Vec<u8>,
+}
 
 /// Manages USB devices for the server, delegating to a backend.
 ///
@@ -99,6 +110,25 @@ impl UsbDeviceManager {
         self.backend.execute_urb(busid, cmd, out_data)
     }
 
+    /// Execute a URB and map any error to a negative URB status code, so the
+    /// caller can always serialise a valid `USBIP_RET_SUBMIT` wire reply.
+    pub fn submit_urb(&self, busid: &str, cmd: &UsbIpCmdSubmit, out_data: &[u8]) -> UrbResult {
+        match self.execute_urb(busid, cmd, out_data) {
+            Ok(transfer) => {
+                UrbResult { status: transfer.status, actual_length: transfer.actual_length, data: transfer.data }
+            },
+            Err(e) => {
+                let status = match e.kind() {
+                    ErrorKind::Usb(ref code) => usb_error_to_urb_status(code),
+                    ErrorKind::DeviceNotFound(_) => -19, // -ENODEV
+                    ErrorKind::Timeout => -62,           // -ETIME
+                    _ => -5,                             // -EIO
+                };
+                UrbResult { status, actual_length: 0, data: Vec::new() }
+            },
+        }
+    }
+
     /// Release a claimed device.
     pub fn release_device(&self, busid: &str) -> UsbIpResult<()> {
         let mut _handles = self.handles.lock().unwrap();
@@ -115,44 +145,12 @@ impl DeviceLister for UsbDeviceManager {
     }
 }
 
-/// Parse a busid string ("busnum-devnum") into its numeric components.
-fn parse_busid(busid: &str) -> UsbIpResult<(u8, u8)> {
-    let parts: Vec<&str> = busid.split('-').collect();
-    if parts.len() < 2 {
-        return Err(UsbIpError::from(ErrorKind::DeviceNotFound(busid.into())));
-    }
-    let busnum: u8 = parts[0].parse().map_err(|_| ErrorKind::DeviceNotFound(busid.into()))?;
-    let devnum: u8 = parts[1].parse().map_err(|_| ErrorKind::DeviceNotFound(busid.into()))?;
-    Ok((busnum, devnum))
-}
-
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::usb_backend::make_test_entry;
-
-    #[test]
-    fn test_parse_busid_valid() {
-        let (bus, dev) = parse_busid("3-2").unwrap();
-        assert_eq!(bus, 3);
-        assert_eq!(dev, 2);
-    }
-
-    #[test]
-    fn test_parse_busid_invalid() {
-        assert!(parse_busid("").is_err());
-        assert!(parse_busid("abc").is_err());
-        assert!(parse_busid("3").is_err());
-    }
-
-    #[test]
-    fn test_parse_busid_multidigit() {
-        let (bus, dev) = parse_busid("12-5").unwrap();
-        assert_eq!(bus, 12);
-        assert_eq!(dev, 5);
-    }
 
     #[test]
     fn test_usb_error_to_urb_status_mapping() {
@@ -213,5 +211,58 @@ mod tests {
 
         let devs = mgr.list_exportable_devices(&[(0x046d, 0xc261), (0x8087, 0x0024)]);
         assert_eq!(devs.len(), 2);
+    }
+
+    // ── submit_urb ──────────────────────────────────────────────────────
+    //
+    // These cross the same seam production uses: `UsbDeviceManager` backed
+    // by a fake `UsbBackend`, with the manager's own claim/lookup guard
+    // exercised exactly as it is at runtime.
+
+    fn make_cmd() -> UsbIpCmdSubmit {
+        use usbip_core::protocol::U32BE;
+        UsbIpCmdSubmit {
+            seqnum: U32BE::new(1),
+            devid: U32BE::new(1),
+            direction: U32BE::new(1),
+            ep: U32BE::new(0x81),
+            transfer_flags: U32BE::new(0),
+            transfer_buffer_length: U32BE::new(64),
+            start_frame: U32BE::new(0),
+            number_of_packets: U32BE::new(0),
+            interval: U32BE::new(0),
+            setup: [0u8; 8],
+        }
+    }
+
+    /// A device that was never claimed maps to -ENODEV, same as the real
+    /// backend's `execute_urb` guard in `UsbDeviceManager::execute_urb`.
+    #[test]
+    fn test_submit_urb_unclaimed_device_maps_to_enodev() {
+        use crate::usb_backend::FakeBackend;
+        let entry = make_test_entry("1-1", 0x046d, 0xc261);
+        let fake = FakeBackend::new(vec![entry]);
+        let mgr = UsbDeviceManager::with_backend(Box::new(fake));
+
+        let result = mgr.submit_urb("1-1", &make_cmd(), &[]);
+        assert_eq!(result.status, -19);
+        assert_eq!(result.actual_length, 0);
+        assert!(result.data.is_empty());
+    }
+
+    /// A claimed device delegates to the backend and maps the transfer
+    /// result straight through.
+    #[test]
+    fn test_submit_urb_claimed_device_succeeds() {
+        use crate::usb_backend::FakeBackend;
+        let entry = make_test_entry("1-1", 0x046d, 0xc261);
+        let fake = FakeBackend::new(vec![entry]);
+        let mgr = UsbDeviceManager::with_backend(Box::new(fake));
+        mgr.claim_device("1-1").unwrap();
+
+        let result = mgr.submit_urb("1-1", &make_cmd(), &[]);
+        assert_eq!(result.status, 0);
+        assert_eq!(result.actual_length, 0);
+        assert!(result.data.is_empty());
     }
 }

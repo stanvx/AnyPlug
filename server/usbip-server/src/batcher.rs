@@ -11,12 +11,9 @@ use std::time::{Duration, Instant};
 
 use tracing::trace;
 
-use usbip_core::protocol::UsbIpHeader;
-use usbip_core::reply::serialize_reply_into;
 use usbip_core::urb::UsbIpCmdSubmit;
-use usbip_core::urb::UsbIpRetSubmit;
 
-use crate::urb_executor::UrbResult;
+use crate::usb::UrbResult;
 
 /// Default maximum number of URBs per batch.
 pub const DEFAULT_BATCH_SIZE: usize = 8;
@@ -120,58 +117,6 @@ impl UrbBatcher {
         }
 
         // Return true if the batch is now full.
-        self.count >= self.max_batch
-    }
-
-    /// Add a URB reply to the batch, writing directly into the internal buffer
-    /// (zero-copy variant — avoids allocating an intermediate `UrbResult` data Vec).
-    ///
-    /// Returns `true` if the caller MUST flush the batch before processing
-    /// further URBs.
-    pub fn push_direct(
-        &mut self,
-        cmd: &UsbIpCmdSubmit,
-        status: i32,
-        actual_length: u32,
-        data: &[u8],
-    ) -> bool {
-        let seqnum = cmd.seqnum();
-
-        // Force flush on non-sequential seqnum.
-        if let Some(last) = self.last_seqnum {
-            if seqnum != last.wrapping_add(1) && !self.buffer.is_empty() {
-                return true;
-            }
-        }
-
-        // Force flush if batch is full.
-        if self.count >= self.max_batch && !self.buffer.is_empty() {
-            return true;
-        }
-
-        // Force flush if timer expired.
-        if let Some(start) = self.batch_start {
-            if start.elapsed() >= self.timeout && !self.buffer.is_empty() {
-                return true;
-            }
-        }
-
-        // Check buffer capacity.
-        let reply_size = UsbIpHeader::SIZE + UsbIpRetSubmit::HEADER_SIZE + data.len();
-        if self.buffer.len() + reply_size > MAX_BATCH_CAPACITY {
-            return true;
-        }
-
-        // Serialize reply directly into internal buffer.
-        serialize_reply_into(&mut self.buffer, cmd, status, actual_length, data);
-
-        self.count += 1;
-        self.last_seqnum = Some(seqnum);
-
-        if self.batch_start.is_none() {
-            self.batch_start = Some(Instant::now());
-        }
-
         self.count >= self.max_batch
     }
 

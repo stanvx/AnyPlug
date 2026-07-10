@@ -38,7 +38,6 @@ use crate::bandwidth::BandwidthLimit;
 use crate::batcher::UrbBatcher;
 use crate::crypto_stream::Wire;
 use crate::discovery::{MdnsAdvertiser, MdnsBrowserImpl};
-use crate::urb_executor::UrbExecutor;
 use crate::usb::UsbDeviceManager;
 use crate::usb_backend::UsbBackend;
 
@@ -393,7 +392,6 @@ async fn handle_urb_loop(
         info_span!("urb_loop", correlation_id = %correlation_id, busid = %busid, peer = %peer_addr);
     let _guard = span.enter();
 
-    let executor = UrbExecutor::new(usb.clone(), busid.clone());
     let mut batcher = UrbBatcher::new();
 
     loop {
@@ -436,7 +434,7 @@ async fn handle_urb_loop(
                     &[]
                 };
 
-                let result = executor.execute(&cmd, data);
+                let result = usb.submit_urb(&busid, &cmd, data);
 
                 // Batch the reply — flush when full, non-sequential, or timed out.
                 if batcher.push(&cmd, &result) {
