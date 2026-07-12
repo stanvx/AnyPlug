@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
@@ -72,6 +73,22 @@ class TvMainActivity : ComponentActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent.action) {
                 localDevices.value = usbManager.attachedDevices()
+
+                // If the detached device was being shared, stop the server
+                val detachedDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                }
+                if (detachedDevice != null && serviceMode.value == AnyPlugService.Mode.SERVER) {
+                    val sharedName = service?.getSharedDeviceName() ?: ""
+                    val detachedName = detachedDevice.productName ?: detachedDevice.deviceName
+                    if (sharedName == detachedName) {
+                        Log.i(TAG, "Shared device '$sharedName' detached — stopping server")
+                        service?.stop()
+                    }
+                }
             }
         }
     }
