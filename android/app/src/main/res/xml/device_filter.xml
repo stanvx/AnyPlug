@@ -5,6 +5,9 @@
     Include known USB game controller VID:PID pairs (reference examples).
     -->
 
+    <!-- Thrustmaster T.Flight Hotas One -->
+    <usb-device vendor-id="1103" product-id="46733" /> <!-- 0x044f:0xb68d -->
+
     <!-- Example: racing wheel (Xbox mode) -->
     <usb-device vendor-id="1133" product-id="49761" /> <!-- 0x046d:0xc261 -->
 
