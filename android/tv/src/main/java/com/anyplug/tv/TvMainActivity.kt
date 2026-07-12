@@ -11,6 +11,7 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.util.Log
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -75,6 +76,11 @@ class TvMainActivity : ComponentActivity() {
         }
     }
 
+    companion object {
+        private const val REQ_POST_NOTIFICATIONS = 1001
+        private const val TAG = "AnyPlugTV"
+    }
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as AnyPlugService.LocalBinder).getService()
@@ -112,6 +118,10 @@ class TvMainActivity : ComponentActivity() {
         permissionHandler = UsbPermissionHandler(this)
 
         localDevices.value = usbManager.attachedDevices()
+        Log.i("AnyPlugTV", "onCreate: attachedDevices count=${localDevices.value.size}, deviceList.size=${usbManager.deviceList.size}")
+        for ((name, dev) in usbManager.deviceList) {
+            Log.i("AnyPlugTV", "  USB: $name vid=${dev.vendorId.toString(16)} pid=${dev.productId.toString(16)} name=${dev.productName}")
+        }
 
         requestNotificationPermissionIfNeeded()
 
@@ -148,10 +158,6 @@ class TvMainActivity : ComponentActivity() {
         if (requestCode == REQ_POST_NOTIFICATIONS) {
             // User can deny — service still runs, but notification is hidden.
         }
-    }
-
-    companion object {
-        private const val REQ_POST_NOTIFICATIONS = 1001
     }
 
     /**

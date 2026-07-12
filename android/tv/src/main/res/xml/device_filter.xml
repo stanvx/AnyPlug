@@ -18,6 +18,9 @@
     <!-- Logitech G923 (Xbox) -->
     <usb-device vendor-id="1133" product-id="49771" /> <!-- 0x046d:0xc26b -->
 
+    <!-- Thrustmaster T.Flight Hotas One -->
+    <usb-device vendor-id="1103" product-id="46733" /> <!-- 0x044f:0xb68d -->
+
     <!-- Thrustmaster T300RS -->
     <usb-device vendor-id="1103" product-id="46600" /> <!-- 0x044f:0xb660 -->
 
