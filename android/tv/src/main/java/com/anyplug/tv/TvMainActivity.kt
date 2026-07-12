@@ -86,7 +86,7 @@ class TvMainActivity : ComponentActivity() {
                     val detachedName = detachedDevice.productName ?: detachedDevice.deviceName
                     if (sharedName == detachedName) {
                         Log.i(TAG, "Shared device '$sharedName' detached — stopping server")
-                        service?.stop()
+                        service?.onDeviceDisconnected()
                     }
                 }
             }
@@ -135,10 +135,9 @@ class TvMainActivity : ComponentActivity() {
         permissionHandler = UsbPermissionHandler(this)
 
         localDevices.value = usbManager.attachedDevices()
-        Log.i("AnyPlugTV", "onCreate: attachedDevices count=${localDevices.value.size}, deviceList.size=${usbManager.deviceList.size}")
-        for ((name, dev) in usbManager.deviceList) {
-            Log.i("AnyPlugTV", "  USB: $name vid=${dev.vendorId.toString(16)} pid=${dev.productId.toString(16)} name=${dev.productName}")
-        }
+
+        // If we were launched by a USB attach while awaiting reconnect, retry
+        tryReconnect(intent)
 
         requestNotificationPermissionIfNeeded()
 
@@ -180,12 +179,44 @@ class TvMainActivity : ComponentActivity() {
     /**
      * Handles USB_DEVICE_ATTACHED / DETACHED intents delivered when
      * the activity is already running (singleTop mode).
+     *
+     * Also triggers auto-reconnect: if the service is in AWAITING_DEVICE
+     * mode and the re-plugged device matches, the server restarts automatically.
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED ||
             intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
             localDevices.value = usbManager.attachedDevices()
+        }
+        tryReconnect(intent)
+    }
+
+    /**
+     * If the service is awaiting a device and the attached intent matches
+     * the last-shared VID/PID, restart the server automatically.
+     */
+    private fun tryReconnect(intent: Intent) {
+        if (intent.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        if (serviceMode.value != AnyPlugService.Mode.AWAITING_DEVICE) return
+
+        val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        } ?: return
+
+        val svc = service ?: return
+        val name = device.productName ?: device.deviceName
+        Log.i(TAG, "Reconnect: auto-restarting server for $name (${device.vendorId.toString(16)}:${device.productId.toString(16)})")
+        
+        if (!usbManager.hasPermission(device)) {
+            permissionHandler?.requestPermission(device) { granted ->
+                if (granted) svc.startServer(name, device.vendorId, device.productId)
+            }
+        } else {
+            svc.startServer(name, device.vendorId, device.productId)
         }
     }
 
@@ -214,10 +245,11 @@ class TvMainActivity : ComponentActivity() {
         val mode by serviceMode
         val sharedName by sharedDeviceNameState
 
-        val isRunning = mode != AnyPlugService.Mode.IDLE
+        val isRunning = mode != AnyPlugService.Mode.IDLE && mode != AnyPlugService.Mode.AWAITING_DEVICE
         val modeText = when (mode) {
             AnyPlugService.Mode.SERVER -> "Server — sharing $sharedName"
             AnyPlugService.Mode.CLIENT -> "Client — connected"
+            AnyPlugService.Mode.AWAITING_DEVICE -> "Awaiting $sharedName..."
             AnyPlugService.Mode.IDLE -> ""
         }
 

@@ -196,10 +196,11 @@ class MainActivity : ComponentActivity() {
         val mode by serviceMode
         val sharedName by sharedDeviceNameState
 
-        val isRunning = mode != AnyPlugService.Mode.IDLE
+        val isRunning = mode != AnyPlugService.Mode.IDLE && mode != AnyPlugService.Mode.AWAITING_DEVICE
         val modeText = when (mode) {
             AnyPlugService.Mode.SERVER -> "Server — sharing $sharedName"
             AnyPlugService.Mode.CLIENT -> "Client — connected"
+            AnyPlugService.Mode.AWAITING_DEVICE -> "Awaiting $sharedName..."
             AnyPlugService.Mode.IDLE -> ""
         }
 

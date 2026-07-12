@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -63,9 +65,13 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
     private var serverRunner: UsbIpServer? = null
     private var clientRunner: UsbIpClient? = null
 
-    enum class Mode { SERVER, CLIENT, IDLE }
+    enum class Mode { SERVER, CLIENT, IDLE, AWAITING_DEVICE }
     var currentMode: Mode = Mode.IDLE
         private set
+
+    /** Last-shared VID/PID — used for auto-reconnect on USB re-plug. */
+    private var lastSharedVid: Int = 0
+    private var lastSharedPid: Int = 0
 
     companion object {
         private const val CHANNEL_ID = "anyplug_channel"
@@ -125,6 +131,25 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
+
+        // Auto-reconnect: if a previously-shared device is plugged back in,
+        // restart the server without requiring the user to open the app.
+        if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED &&
+            currentMode == Mode.AWAITING_DEVICE) {
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE) as? UsbDevice
+            }
+            if (device != null &&
+                device.vendorId == lastSharedVid &&
+                device.productId == lastSharedPid) {
+                val name = device.productName ?: device.deviceName
+                android.util.Log.i("AnyPlugService", "Reconnected: auto-restarting server for $name")
+                startServer(name, lastSharedVid, lastSharedPid)
+            }
+        }
 
         val notificationIntent =
             packageManager.getLaunchIntentForPackage(packageName)
@@ -209,6 +234,7 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
     fun getModeText(): String = when (currentMode) {
         Mode.SERVER -> "Server — sharing $sharedDeviceName"
         Mode.CLIENT -> "Client — connected"
+        Mode.AWAITING_DEVICE -> "Awaiting $sharedDeviceName..."
         Mode.IDLE -> ""
     }
 
@@ -228,6 +254,8 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
         currentMode = Mode.SERVER
         _state.value = Mode.SERVER
         sharedDeviceName = deviceName
+        lastSharedVid = vid
+        lastSharedPid = pid
         android.util.Log.i("AnyPlugService", "startServer: $deviceName (vid=$vid pid=$pid)")
         if (wakeLock?.isHeld == false) {
             wakeLock?.acquire(SESSION_WAKE_LOCK_TIMEOUT_MS)
@@ -329,6 +357,20 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
         } else {
             startService(intent)
         }
+    }
+
+    /**
+     * Called when the shared USB device is physically unplugged.
+     * Stops the server but keeps the service alive so it can
+     * auto-re-share when the same device is plugged back in.
+     */
+    fun onDeviceDisconnected() {
+        android.util.Log.i("AnyPlugService", "Device '$sharedDeviceName' disconnected — awaiting reconnect")
+        serverRunner?.stop()
+        serverRunner = null
+        currentMode = Mode.AWAITING_DEVICE
+        _state.value = Mode.AWAITING_DEVICE
+        if (wakeLock?.isHeld == true) wakeLock?.release()
     }
 
     /**
