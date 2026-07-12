@@ -6,6 +6,9 @@ members = [
     "client/usbip-client",
     "windows",
 ]
+exclude = [
+    "android/rust/usbip-android",
+]
 
 # Windows crate excluded on Linux — use `cargo build --workspace`
 # on Windows or with cross-compilation target.
