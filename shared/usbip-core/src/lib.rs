@@ -14,6 +14,7 @@
 
 pub mod crypto;
 pub mod descriptor;
+pub mod discovery_txt;
 pub mod error;
 pub mod pool;
 pub mod protocol;
@@ -66,6 +67,10 @@ pub use urb::UsbIpRetUnlink;
 pub use reply::serialize_reply;
 pub use reply::serialize_reply_into;
 pub use reply::serialize_ret_submit;
+
+pub use discovery_txt::decode_devices_txt;
+pub use discovery_txt::encode_devices_txt;
+pub use discovery_txt::DiscoveredDevice;
 
 /// Default USB/IP TCP port (IANA-registered).
 pub const USBIP_PORT: u16 = 3240;

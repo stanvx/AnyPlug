@@ -57,3 +57,7 @@ tokio-tungstenite = "0.24"
 [[bench]]
 name = "forward_bench"
 harness = false
+
+[[bench]]
+name = "urb_high_water_mark"
+harness = false

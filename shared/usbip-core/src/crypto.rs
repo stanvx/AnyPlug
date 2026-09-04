@@ -151,6 +151,10 @@ pub fn encrypt_with_key_bytes(key_bytes: &[u8], plaintext: &[u8]) -> CryptoResul
 /// Decrypt ciphertext produced by `encrypt_message()` / `encrypt_with_nonce()`.
 ///
 /// Wire format: `[4-byte nonce_len (=12)][12-byte nonce][ciphertext || 16-byte GCM tag]`
+///
+/// Audit (issue #34): allocates a fresh `Vec<u8>` for the plaintext.
+/// Call sites: `decrypt_with_key_bytes` (JNI bridge — must allocate for FFI),
+/// unit tests only. Production server path uses `decrypt_in_place` instead.
 pub fn decrypt(key: &LessSafeKey, wire_data: &[u8]) -> CryptoResult<Vec<u8>> {
     if wire_data.len() < 4 + 12 + 16 {
         // minimum: 4-byte len + 12-byte nonce + 16-byte tag
@@ -185,6 +189,10 @@ pub fn decrypt(key: &LessSafeKey, wire_data: &[u8]) -> CryptoResult<Vec<u8>> {
 /// (which `open_in_place` zeroes on success), and a borrowed slice of the
 /// remaining plaintext is returned. No reallocation occurs; the buffer's
 /// `capacity()` is preserved across the call.
+///
+/// Audit (issue #34): in-place — mutates the caller's buffer, zero copies.
+/// Call sites: `server/crypto_stream.rs:146` (CryptoStream::read_message, the
+/// sole production decrypt path), unit test `test_decrypt_in_place_roundtrip`.
 pub fn decrypt_in_place<'a>(
     key: &'a LessSafeKey,
     buf: &'a mut Vec<u8>,

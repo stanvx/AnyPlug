@@ -109,7 +109,7 @@ Project roadmap and milestone tracking for the USB/IP passthrough system.
 - [x] ROADMAP.md — milestone tracking
 - [x] docs/SETUP.md — platform setup guides
 - [x] docs/TROUBLESHOOTING.md — diagnosis and fixes
-- [x] docs/DEVICES.md — device profiles and known quirks
+- [ ] docs/DEVICES.md — device profiles and known quirks (file not yet created)
 - [x] docs/ANDROID-TV.md — TV-specific guide
 - [x] docs/PERFORMANCE.md — latency, benchmarks, tuning
 - [x] docs/BUILDING.md — compilation from source
@@ -163,11 +163,11 @@ not just the original reference hardware. Delivered per PRD #1.
 ## Milestone 13: Reliability ✅
 
 - [x] Structured errors with correlation IDs (per ADR-0003: must come first)
-- [x] Hot-plug detection (device attach/detach after server start)
+- [ ] Hot-plug detection (device attach/detach after server start) — v1.1; poll-based `hotplug.rs` was removed (issue #29), design per ADR-0005
 - [x] Auto-reconnect (survive network flaps and server restarts)
 - [x] Multiple simultaneous client connections to different devices
 - [x] Linux client daemon (systemd unit + local control socket)
-- [x] End-to-end latency monitoring dashboard
+- [x] End-to-end latency monitoring dashboard — `/api/events` WebSocket broadcast + per-URB high-water-mark latency sampling (issue #33)
 
 ## Milestone 14: Ecosystem ✅
 
@@ -185,7 +185,6 @@ Features explicitly deferred beyond v1.0:
 - [ ] Session persistence (resume active import after server crash) — per ADR-0003
 - [ ] USB 3.0 SuperSpeed support (up to 5 Gbps)
 - [ ] IPv6 support
-- [ ] Prometheus metrics endpoint
 - [ ] Bandwidth throttling per client
 - [ ] Custom embedded firmware image (Buildroot/Yocto)
 - [ ] Home Assistant add-on

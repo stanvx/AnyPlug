@@ -52,7 +52,8 @@ main thread
   │           ├── URB receive thread (reads USB/IP commands from client)
   │           ├── URB submit thread (forwards to physical USB device)
   │           └── URB reply thread (sends responses back to client)
-  └── device monitor thread (libusb hotplug callbacks)
+  └── device monitor (deferred to v1.1 per ADR-0005: libusb hotplug callbacks;
+      poll-based HotplugMonitor was removed — issue #29)
 ```
 
 ### Client Threads
@@ -271,15 +272,21 @@ battery_optimization_bypass = true
 ## Dependency Map
 
 ```
-usbip-core (Rust, no_std capable)
+usbip-core (Rust)
 ├── byteorder
-├── crc32fast
 ├── zerocopy (safe transmutes)
-└── thiserror
+├── crc32fast
+├── thiserror
+├── tracing (structured logging)
+├── ring (AES-GCM, X25519, HKDF)
+├── uuid (correlation IDs)
+├── crossbeam
+├── rand
+└── tokio (async message framing)
 
 usbip-server (Rust)
 ├── usbip-core
-├── libusb (via rusb)
+├── rusb (libusb)
 ├── mdns-sd
 ├── tokio (async runtime)
 ├── tracing (structured logging)

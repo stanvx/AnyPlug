@@ -7,35 +7,9 @@
 use std::sync::LazyLock;
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Router};
-use prometheus::{
-    register_int_counter, register_int_gauge, Encoder, IntCounter, IntGauge, TextEncoder,
-};
+use prometheus::{register_int_gauge, Encoder, IntGauge, TextEncoder};
 
 // ── Metric definitions (lazily registered once) ─────────────────────
-
-/// Number of devices currently exported (gauge).
-pub static DEVICES_EXPORTED: LazyLock<IntGauge> = LazyLock::new(|| {
-    register_int_gauge!("usbip_devices_exported", "Number of USB devices currently exported")
-        .expect("metric registration failed")
-});
-
-/// Number of active TCP client connections (gauge).
-pub static CLIENTS_CONNECTED: LazyLock<IntGauge> = LazyLock::new(|| {
-    register_int_gauge!("usbip_clients_connected", "Number of active TCP client connections")
-        .expect("metric registration failed")
-});
-
-/// Total number of URB submissions processed (counter).
-pub static URB_SUBMIT_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_int_counter!("usbip_urb_submit_total", "Total number of URB submissions processed")
-        .expect("metric registration failed")
-});
-
-/// Total bytes transferred in URB payloads (counter).
-pub static URB_BYTES_TOTAL: LazyLock<IntCounter> = LazyLock::new(|| {
-    register_int_counter!("usbip_urb_bytes_total", "Total bytes transferred in URB payloads")
-        .expect("metric registration failed")
-});
 
 /// Whether encryption is enabled; 1 = enabled, 0 = disabled (gauge).
 pub static ENCRYPTION_ENABLED: LazyLock<IntGauge> = LazyLock::new(|| {
