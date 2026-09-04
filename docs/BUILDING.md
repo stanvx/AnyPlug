@@ -171,25 +171,35 @@ anyplug/
 ### Crate Dependency Tree
 
 ```
-usbip-core           (shared protocol types — no platform deps)
-├── ring             (AES-256-GCM, X25519)
-├── zerocopy         (safe transmutation for wire types)
+usbip-core           (shared protocol types — no OS-specific deps)
 ├── byteorder        (big-endian types)
+├── zerocopy         (safe transmutation for wire types)
 ├── crc32fast        (CRC-32 for descriptor verification)
-└── serde/serde_json (config serialization)
+├── thiserror        (error types)
+├── ring             (AES-256-GCM, X25519, HKDF)
+├── uuid             (correlation IDs)
+├── crossbeam
+├── rand
+├── tokio            (async message framing)
+└── tracing          (structured logging)
 
 usbip-server         (server binary)
 ├── usbip-core       (protocol types)
 ├── rusb             (libusb bindings)
-├── tokio            (async TCP)
+├── tokio            (async runtime)
 ├── mdns-sd          (mDNS advertisement)
-└── clap             (CLI parsing)
+├── clap             (CLI parsing)
+├── ring             (AES-256-GCM)
+├── axum/tower       (REST API + WebSocket)
+└── prometheus       (metrics endpoint)
 
 usbip-client         (client binary)
 ├── usbip-core       (protocol types)
 ├── tokio            (async TCP)
 ├── mdns-sd          (mDNS browsing)
-└── clap             (CLI parsing)
+├── clap             (CLI parsing)
+├── ring             (AES-256-GCM)
+└── winapi           (Windows: SetupAPI, IOCTL)
 
 windows              (Windows GUI + Service)
 ├── usbip-core       (protocol types)

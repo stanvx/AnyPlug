@@ -95,26 +95,10 @@ impl MdnsAdvertiser {
 
 /// Encode the device list as the `devices` TXT value.
 ///
-/// Format: comma-separated `vid=0xVVVV,pid=0xPPPP,bus=B-B,n=NAME` tuples.
-/// The `n=` field is the human-readable device name; today
-/// `UsbIpDeviceEntry` carries no product string, so we fall back to a
-/// stable `VVVV:PPPP` placeholder. A future change can plumb `iProduct`
-/// from the descriptor tree.
+/// Delegates to `usbip_core::discovery_txt::encode_devices_txt` — the
+/// single canonical seam for this wire format.
 pub fn encode_devices_txt(devices: &[UsbIpDeviceEntry]) -> String {
-    devices
-        .iter()
-        .map(|d| {
-            format!(
-                "vid=0x{:04x},pid=0x{:04x},bus={},n={:04x}:{:04x}",
-                d.vid(),
-                d.pid(),
-                d.busid_str(),
-                d.vid(),
-                d.pid()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",")
+    usbip_core::discovery_txt::encode_devices_txt(devices)
 }
 
 impl Drop for MdnsAdvertiser {

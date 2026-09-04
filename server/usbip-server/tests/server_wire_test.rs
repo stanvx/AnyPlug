@@ -5,6 +5,7 @@
 //! localhost, and drops the client stream to shut down cleanly.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -59,7 +60,9 @@ async fn test_devlist_returns_fake_devices() {
         let (stream, peer) = listener.accept().await.unwrap();
         let exports =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-        let _ = handle_client(stream, peer, usb_clone, exports, config).await;
+        let peak = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let _ = handle_client(stream, peer, usb_clone, exports, config, peak, tx).await;
     });
 
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -115,7 +118,9 @@ async fn test_import_valid_device_returns_success() {
         let (stream, peer) = listener.accept().await.unwrap();
         let exports =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-        let _ = handle_client(stream, peer, usb_clone, exports, config).await;
+        let peak = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let _ = handle_client(stream, peer, usb_clone, exports, config, peak, tx).await;
     });
 
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();

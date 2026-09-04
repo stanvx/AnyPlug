@@ -15,11 +15,12 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use tracing::{debug, error, info, info_span, warn};
 use uuid::Uuid;
 use zerocopy::FromBytes;
@@ -34,10 +35,12 @@ use usbip_core::protocol::{
 use usbip_core::urb::UsbIpCmdSubmit;
 
 use crate::api;
+use crate::api::LatencySample;
 use crate::bandwidth::BandwidthLimit;
 use crate::batcher::UrbBatcher;
 use crate::crypto_stream::Wire;
 use crate::discovery::{MdnsAdvertiser, MdnsBrowserImpl};
+use crate::latency_hwm;
 use crate::usb::UsbDeviceManager;
 use crate::usb_backend::UsbBackend;
 
@@ -51,6 +54,12 @@ pub struct Server {
     pub mdns: Option<MdnsAdvertiser>,
     /// Server configuration.
     pub config: ServerConfig,
+    /// Shared high-water-mark peak for URB latency across all
+    /// connection tasks.
+    urb_latency_peak: Arc<AtomicU64>,
+    /// Broadcast channel for per-URB latency samples. Shared with
+    /// the WebSocket handler via `AppState`.
+    latency_tx: broadcast::Sender<LatencySample>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,7 +96,14 @@ impl Server {
         let usb = UsbDeviceManager::new()?;
         let devices = usb.list_exportable_devices(&config.allowed_vid_pid);
         let mdns = MdnsAdvertiser::new(config.port, devices).ok();
-        Ok(Self { usb: Arc::new(usb), exports: Arc::new(Mutex::new(HashMap::new())), mdns, config })
+        Ok(Self {
+            usb: Arc::new(usb),
+            exports: Arc::new(Mutex::new(HashMap::new())),
+            mdns,
+            config,
+            urb_latency_peak: Arc::new(AtomicU64::new(0)),
+            latency_tx: api::new_latency_sender(),
+        })
     }
 
     /// Create a server with a specific USB backend (for testing or non-libusb platforms).
@@ -102,7 +118,14 @@ impl Server {
         let usb = UsbDeviceManager::with_backend(backend);
         let devices = usb.list_exportable_devices(&config.allowed_vid_pid);
         let mdns = MdnsAdvertiser::new(config.port, devices).ok();
-        Ok(Self { usb: Arc::new(usb), exports: Arc::new(Mutex::new(HashMap::new())), mdns, config })
+        Ok(Self {
+            usb: Arc::new(usb),
+            exports: Arc::new(Mutex::new(HashMap::new())),
+            mdns,
+            config,
+            urb_latency_peak: Arc::new(AtomicU64::new(0)),
+            latency_tx: api::new_latency_sender(),
+        })
     }
 
     /// Run the server — listens forever.
@@ -125,9 +148,21 @@ impl Server {
             let usb = self.usb.clone();
             let exports = self.exports.clone();
             let config = self.config.clone();
+            let urb_latency_peak = Arc::clone(&self.urb_latency_peak);
+            let latency_tx = self.latency_tx.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_client(stream, peer_addr, usb, exports, config).await {
+                if let Err(e) = handle_client(
+                    stream,
+                    peer_addr,
+                    usb,
+                    exports,
+                    config,
+                    urb_latency_peak,
+                    latency_tx,
+                )
+                .await
+                {
                     error!("Client {} error: {}", peer_addr, e);
                 }
             });
@@ -181,7 +216,7 @@ impl Server {
                 cfg.encryption_enabled = self.config.encryption_enabled;
                 cfg
             })),
-            latency_tx: api::new_latency_sender(),
+            latency_tx: self.latency_tx.clone(),
         }
     }
 
@@ -222,9 +257,21 @@ impl Server {
             let usb = self.usb.clone();
             let exports = self.exports.clone();
             let config = self.config.clone();
+            let urb_latency_peak = Arc::clone(&self.urb_latency_peak);
+            let latency_tx = self.latency_tx.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_client(stream, peer_addr, usb, exports, config).await {
+                if let Err(e) = handle_client(
+                    stream,
+                    peer_addr,
+                    usb,
+                    exports,
+                    config,
+                    urb_latency_peak,
+                    latency_tx,
+                )
+                .await
+                {
                     error!("Client {} error: {}", peer_addr, e);
                 }
             });
@@ -242,6 +289,8 @@ pub async fn handle_client(
     usb: Arc<UsbDeviceManager>,
     exports: Arc<Mutex<HashMap<String, (SocketAddr, UsbIpDeviceEntry)>>>,
     config: ServerConfig,
+    urb_latency_peak: Arc<AtomicU64>,
+    latency_tx: broadcast::Sender<LatencySample>,
 ) -> UsbIpResult<()> {
     let correlation_id = Uuid::now_v7();
     let span = info_span!("handle_client", correlation_id = %correlation_id);
@@ -264,8 +313,16 @@ pub async fn handle_client(
     match header.command.get() {
         OP_REQ_DEVLIST => handle_devlist(&mut stream, &usb).await?,
         OP_REQ_IMPORT => {
-            handle_import(stream, usb.clone(), &exports, config.encryption_enabled, peer_addr)
-                .await?
+            handle_import(
+                stream,
+                usb.clone(),
+                &exports,
+                config.encryption_enabled,
+                peer_addr,
+                urb_latency_peak,
+                latency_tx,
+            )
+            .await?
         },
         _ => {
             warn!("Unknown command: 0x{:04x}", header.command.get());
@@ -310,6 +367,8 @@ async fn handle_import(
     exports: &Mutex<HashMap<String, (SocketAddr, UsbIpDeviceEntry)>>,
     encryption_enabled: bool,
     peer_addr: SocketAddr,
+    urb_latency_peak: Arc<AtomicU64>,
+    latency_tx: broadcast::Sender<LatencySample>,
 ) -> UsbIpResult<()> {
     // Read busid (32 bytes)
     let mut busid_buf = [0u8; 32];
@@ -376,7 +435,8 @@ async fn handle_import(
     };
 
     // Enter URB forwarding loop
-    handle_urb_loop(&mut wire, usb.clone(), exports, busid, peer_addr).await
+    handle_urb_loop(&mut wire, usb.clone(), exports, busid, peer_addr, urb_latency_peak, latency_tx)
+        .await
 }
 
 /// Main URB forwarding loop after device import.
@@ -386,6 +446,8 @@ async fn handle_urb_loop(
     exports: &Mutex<HashMap<String, (SocketAddr, UsbIpDeviceEntry)>>,
     busid: String,
     peer_addr: SocketAddr,
+    urb_latency_peak: Arc<AtomicU64>,
+    latency_tx: broadcast::Sender<LatencySample>,
 ) -> UsbIpResult<()> {
     let correlation_id = Uuid::now_v7();
     let span =
@@ -393,6 +455,7 @@ async fn handle_urb_loop(
     let _guard = span.enter();
 
     let mut batcher = UrbBatcher::new();
+    let mut hwm = latency_hwm::HighWaterMark::new(busid.clone(), urb_latency_peak, latency_tx);
 
     loop {
         // Read a full USB/IP message — header + (variable) payload.
@@ -434,7 +497,10 @@ async fn handle_urb_loop(
                     &[]
                 };
 
+                let submit_start = std::time::Instant::now();
                 let result = usb.submit_urb(&busid, &cmd, data);
+                let elapsed_us = submit_start.elapsed().as_micros() as u64;
+                hwm.observe(elapsed_us, cmd.seqnum());
 
                 // Batch the reply — flush when full, non-sequential, or timed out.
                 if batcher.push(&cmd, &result) {
@@ -637,7 +703,9 @@ mod import_tests {
 
         let server = tokio::spawn(async move {
             let (stream, peer) = listener.accept().await.unwrap();
-            handle_import(stream, usb, &exports, false, peer).await.unwrap();
+            let peak = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let (tx, _rx) = tokio::sync::broadcast::channel(16);
+            handle_import(stream, usb, &exports, false, peer, peak, tx).await.unwrap();
         });
 
         // Client: send the 8-byte request header + 32-byte busid "9-9".

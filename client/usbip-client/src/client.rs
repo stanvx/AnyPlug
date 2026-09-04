@@ -482,11 +482,8 @@ async fn urb_forwarding_loop(stream: &mut TcpStream, vhci: &dyn VhciBackend) -> 
                             UsbIpError::from(ErrorKind::Protocol("invalid RET_SUBMIT".into()))
                         })?;
 
-                let in_data = if ret.has_data() {
-                    &payload[UsbIpRetSubmit::HEADER_SIZE..]
-                } else {
-                    &[][..]
-                };
+                let in_data =
+                    if ret.has_data() { &payload[UsbIpRetSubmit::HEADER_SIZE..] } else { &[][..] };
 
                 // Complete the URB on the VHCI side
                 vhci.complete_urb(
@@ -501,10 +498,10 @@ async fn urb_forwarding_loop(stream: &mut TcpStream, vhci: &dyn VhciBackend) -> 
                 if payload.len() < UsbIpRetUnlink::SIZE {
                     return Err(UsbIpError::from(ErrorKind::Protocol("invalid RET_UNLINK".into())));
                 }
-                let (unlink, _) = UsbIpRetUnlink::read_from_prefix(&payload[..UsbIpRetUnlink::SIZE])
-                    .map_err(|_| {
-                        UsbIpError::from(ErrorKind::Protocol("invalid RET_UNLINK".into()))
-                    })?;
+                let (unlink, _) = UsbIpRetUnlink::read_from_prefix(
+                    &payload[..UsbIpRetUnlink::SIZE],
+                )
+                .map_err(|_| UsbIpError::from(ErrorKind::Protocol("invalid RET_UNLINK".into())))?;
 
                 vhci.cancel_urb(unlink.seqnum(), unlink.devid())?;
             },

@@ -18,11 +18,11 @@ cargo fmt --all -- --check                         # rustfmt is configured — s
 cargo clippy --workspace -- -D warnings            # CI gate; treat warnings as errors
 ```
 
-Per-crate:
+Per-crate (all three crates have integration tests under `tests/` plus inline `#[cfg(test)]` modules; see `find . -name '*.rs' -path '*/tests/*'` and `grep -rl '#[cfg(test)]'`):
 ```bash
-cargo test --release -p usbip-core                 # only crate with real coverage today
-cargo test --release -p usbip-server               # passes vacuously
-cargo test --release -p usbip-client               # passes vacuously
+cargo test --release -p usbip-core                 # protocol types + descriptor fixtures
+cargo test --release -p usbip-server               # wire protocol, REST API, encryption
+cargo test --release -p usbip-client               # VHCI injection seam + inline URB forwarding
 ```
 
 Android (committed wrapper exists — `./gradlew`, not bare `gradle`):
