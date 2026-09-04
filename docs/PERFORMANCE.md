@@ -31,7 +31,10 @@ Typical HID polling interval is **1 ms** (1000 Hz). Acceptable round-trip thresh
 
 ## End-to-End Latency Numbers
 
-Measured with USB HID device on Linux server (i7-8700K) and Windows client (i5-12400), same gigabit Ethernet switch.
+Target values for the round-trip budget, based on external packet-timing and
+component estimates. The URB loop does not yet instrument per-URB latency
+in process (issue #33); these figures are planning targets for the system,
+not measurements produced by the project's own tooling.
 
 ### Base Latency (No Encryption)
 
@@ -61,21 +64,26 @@ Encryption overhead is < 1 ms on CPUs with AES-NI (most x86 from 2012+). ARM CPU
 
 ## URB Pool Sizing
 
-The URB pool (`shared/usbip-core/src/urb.rs`) pre-allocates buffers to avoid hot-path allocations.
+The URB pool (`shared/usbip-core/src/pool.rs`) pre-allocates buffers to avoid hot-path allocations. The pool self-tunes its size via an EWMA of the observed URB rate.
 
 ### Default Configuration
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| Pool size | 1024 | Number of pre-allocated URB buffers |
-| Data capacity | 1024 | Max URB payload bytes |
-| Buffer total | 1080 bytes | 56 header + 1024 data |
+| Minimum pool size | 1024 | Number of pre-allocated URB buffers before growth |
+| Bulk data capacity | 16 KiB | Max bulk/control URB payload bytes |
+| Interrupt data capacity | 64 B | Max interrupt-transfer URB payload bytes |
 
-**Typical HID controller:** IN URBs ~78 bytes, OUT URBs ~4 bytes, up to 1000 URBs/sec each way. Pool of 1024 = ~1 MB, cycles every ~1 sec at max rate. Latency spikes beyond capacity cause allocation on hot path.
+**Typical HID controller:** IN URBs ~78 bytes, OUT URBs ~4 bytes, up to 1000 URBs/sec each way. A bulk pool of 1024 × 16 KiB buffers holds ~16 MiB and cycles every ~1 sec at max rate. Latency spikes beyond capacity cause allocation on hot path.
+
+> Note: `UrbBufferPool` is currently exercised only in `usbip-core`'s own
+> tests/benchmarks; the server URB loop (`handle_urb_loop`) does not yet
+> acquire buffers from it. These figures describe the pool's design defaults,
+> not the live data path.
 
 ### When to Increase Pool Size
 
-Increase `POOL_SIZE` if you see `allocating URB buffer on hot path` in trace logs, have high-latency USB devices (isochronous), or use encryption.
+Increase the `min_size` argument if you see `allocating URB buffer on hot path` in trace logs, have high-latency USB devices (isochronous), or use encryption.
 
 ```
 Target: pool holds 2x URBs seen in one second
@@ -91,11 +99,12 @@ The batcher (`server/usbip-server/src/batcher.rs`) coalesces multiple URBs into 
 | Flush interval | CPU savings | Added latency | Best for |
 |---------------|-------------|---------------|----------|
 | 100 µs | 5-10% | ~50 µs avg | Low-latency (HID, wheel) |
+| 200 µs | 10-20% | ~100 µs avg | Default |
 | 500 µs | 20-30% | ~250 µs avg | Bulk (mass storage) |
 | 1 ms | 40-50% | ~500 µs avg | Throughput-sensitive |
 | None | 0% | 0 µs | Minimum latency |
 
-Default is **100 µs** — balances CPU and latency for HID devices.
+Default is **200 µs** — balances CPU and latency for HID devices.
 
 ---
 
@@ -206,10 +215,11 @@ If Wi-Fi is the only option:
 
 ### Per-Message Wire Overhead
 
-Without encryption: `[8-byte header] [payload]` = 8 + N bytes
-With encryption: `[8-byte header] [12-byte nonce] [encrypted] [16-byte tag]` = 36 + N bytes
+Without encryption: raw kernel framing — the USB/IP message (`[8-byte header] [payload]`) is written directly = 8 + N bytes.
 
-For a 78-byte IN URB: 86 bytes unencrypted vs 114 encrypted (~32% increase). CPU cost ~1-2 µs/URB on AES-NI.
+With encryption: `[4-byte ciphertext length BE][ciphertext][12-byte nonce][16-byte GCM tag]`, where ciphertext is the encrypted full USB/IP message (header + payload) = 4 + (8 + N) + 12 + 16 = 40 + N bytes on the wire.
+
+For a 78-byte IN URB (message size 86): 86 bytes unencrypted vs 126 encrypted (~47% increase). CPU cost ~1-2 µs/URB on AES-NI.
 
 ### CPU Usage at 1000 URBs/sec
 

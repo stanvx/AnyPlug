@@ -48,7 +48,7 @@ Open the app on both — auto-discovery via mDNS. Tap the device on TV to connec
 - **USB/IP protocol** — same as Linux kernel, battle-tested since 2008.
 - **mDNS discovery** — no IP config needed, devices find each other.
 - **AES-256-GCM encryption** — optional, for untrusted networks.
-- **Sub-1ms per-URB latency** on Ethernet, 2-5ms on Wi-Fi 6.
+- **Sub-2ms per-URB latency target** on Ethernet, 2-5ms on Wi-Fi 6.
 - **Service mode** — runs headless, survives reboots.
 - **Android TV UI** — D-pad navigable, remote-friendly.
 - **Auto-reconnect** — survives network flaps and device cycles.
@@ -75,9 +75,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Latency Budget
 
-HID URB round-trip on gigabit Ethernet: **~700 µs total RTT**.
+HID URB round-trip target on gigabit Ethernet: **~1.5-3.5 ms total RTT** (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for the breakdown).
 
-For FFB at 250 Hz (<4ms needed): 5x headroom on Ethernet, 2x on good Wi-Fi.
+For FFB at 250 Hz (<4ms needed): comfortable headroom on Ethernet, marginal on Wi-Fi.
 
 ---
 

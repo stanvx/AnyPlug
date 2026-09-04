@@ -8,6 +8,7 @@
 //! (length 32) — never 0x00000111 (USB/IP version).
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
@@ -59,7 +60,9 @@ async fn test_encrypted_stream_post_handshake_bytes_not_plaintext() {
         let (stream, peer) = listener.accept().await.unwrap();
         let exports =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-        let _ = handle_client(stream, peer, usb_clone, exports, config).await;
+        let peak = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let _ = handle_client(stream, peer, usb_clone, exports, config, peak, tx).await;
     });
 
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();

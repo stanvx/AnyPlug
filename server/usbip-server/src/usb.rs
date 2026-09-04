@@ -114,8 +114,10 @@ impl UsbDeviceManager {
     /// caller can always serialise a valid `USBIP_RET_SUBMIT` wire reply.
     pub fn submit_urb(&self, busid: &str, cmd: &UsbIpCmdSubmit, out_data: &[u8]) -> UrbResult {
         match self.execute_urb(busid, cmd, out_data) {
-            Ok(transfer) => {
-                UrbResult { status: transfer.status, actual_length: transfer.actual_length, data: transfer.data }
+            Ok(transfer) => UrbResult {
+                status: transfer.status,
+                actual_length: transfer.actual_length,
+                data: transfer.data,
             },
             Err(e) => {
                 let status = match e.kind() {

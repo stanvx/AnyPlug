@@ -245,24 +245,29 @@ When encryption is enabled, after the initial TCP handshake:
 ```
 Client                                    Server
   │                                         │
-  │  ECDH key exchange (X25519)             │
+  │  [4-byte len=32][X25519 pubkey]         │
   │────────────────────────────────────────►│
   │                                         │
-  │                  ECDH response           │
+  │  [4-byte len=32][X25519 pubkey]         │
   │◄────────────────────────────────────────│
   │                                         │
   │  HKDF-SHA256 → AES-256-GCM session key │
   │                                         │
   │  All subsequent USB/IP messages:        │
-  │  [4-byte ciphertext length][ciphertext] │
+  │  [4-byte ciphertext length BE]          │
+  │  [ciphertext || 12-byte nonce ||        │
+  │   16-byte GCM tag]                      │
   │  Each message has unique 96-bit nonce   │
-  │  (initialized from session key + seq)   │
   │                                         │
 ```
 
-## 7. Compression Extension (optional)
+The 4-byte ciphertext length prefix is big-endian. The nonce (12 bytes) and
+GCM tag (16 bytes) are appended to the ciphertext within that length.
 
-For bulk endpoints on slow links:
+## 7. Compression Extension (optional — NOT implemented)
+
+Designed for bulk endpoints on slow links. Not yet implemented in code;
+this section describes the intended wire format for a future release.
 
 ```
 After encryption (if enabled):
