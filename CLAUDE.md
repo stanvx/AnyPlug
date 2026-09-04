@@ -61,4 +61,6 @@ cd android
 
 ## Docs
 
-`docs/BUILDING.md`, `docs/SETUP.md`, `docs/PERFORMANCE.md` (latency budget), `docs/TROUBLESHOOTING.md`, `docs/ANDROID-TV.md`, `docs/DOCKER.md`. Issue tracker conventions: `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`.
+`docs/BUILDING.md`, `docs/SETUP.md`, `docs/PERFORMANCE.md` (latency budget), `docs/TROUBLESHOOTING.md`, `docs/ANDROID-TV.md`, `docs/DOCKER.md`. Issue tracker conventions: `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, `docs/agents/context-protocol.md`.
+
+Runtime agent memory (`AgentsReport/`) is gitignored and local-only. Agents should read `docs/agents/context-protocol.md` first when resuming work.

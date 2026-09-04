@@ -71,3 +71,10 @@ tarpaulin-report.html
 *.lcov
 lcov.info
 coverage/
+
+# ─── Agent runtime memory (local-only) ──────────────────
+# Incremental reports, context packs, plans, and session dumps produced by
+# agent workflows. Never commit these; committed agent conventions live in
+# docs/agents/.
+AgentsReport/
+/session
