@@ -60,6 +60,12 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.5"
     }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -83,6 +89,7 @@ dependencies {
 
     // Test dependencies
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.11.1")
     testImplementation("androidx.test.ext:junit:1.1.5")
     testImplementation("androidx.test.espresso:espresso-core:3.5.1")
     testImplementation("androidx.compose.ui:ui-test-junit4")

@@ -133,6 +133,7 @@ fun TvDeviceCard(
     onAction: () -> Unit,
     modifier: Modifier = Modifier,
     isShared: Boolean = false,
+    isDestructive: Boolean = false,
 ) {
     TvCard(
         modifier = modifier,
@@ -182,7 +183,7 @@ fun TvDeviceCard(
                     enabled = false,
                 )
             } else {
-                TvButton(label = actionLabel, onClick = onAction)
+                TvButton(label = actionLabel, onClick = onAction, isDestructive = isDestructive)
             }
         }
     }

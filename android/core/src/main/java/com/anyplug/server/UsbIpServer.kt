@@ -279,7 +279,7 @@ class UsbIpServer(
                 val flags = cmd.getInt(16)
                 val dataLen = cmd.getInt(20)
                 val setup = ByteArray(8)
-                cmd.position(40)
+                cmd.position(36)
                 cmd.get(setup)
 
                 // Read data for OUT transfers
@@ -295,12 +295,12 @@ class UsbIpServer(
                     )
 
                     // Send RET_SUBMIT
-                    val retBuf = buildRetSubmit(seqnum, devid, ep, direction, status, actualLen, setup, inData)
+                    val retBuf = buildRetSubmit(seqnum, devid, direction, ep, status, actualLen, setup, inData)
                     output.write(retBuf)
                     output.flush()
                 } catch (e: Exception) {
                     // Send error RET_SUBMIT
-                    val retBuf = buildRetSubmit(seqnum, devid, ep, direction, -5 /* -EIO */, 0, setup, ByteArray(0))
+                    val retBuf = buildRetSubmit(seqnum, devid, direction, ep, -5 /* -EIO */, 0, setup, ByteArray(0))
                     output.write(retBuf)
                     output.flush()
                 }
@@ -322,49 +322,68 @@ class UsbIpServer(
         outData: ByteArray
     ): Triple<Int, Int, ByteArray> {
         val epNumber = epAddr and 0x0F
-        val isIn = (epAddr and 0x80) != 0
+        val isIn = (direction != 0) || ((flags and 0x0200) != 0) || ((epAddr and 0x80) != 0)
 
-        // Find the endpoint object
-        val endpoint = findEndpoint(device, epAddr)
-            ?: return Triple(-19 /* -ENODEV */, 0, ByteArray(0))
-
-        return if (isControlTransfer(setup)) {
-            // Control transfer
+        // Control transfers and Endpoint 0 must be handled via controlTransfer directly,
+        // as Android's UsbDevice.getInterface().getEndpoint() does not expose endpoint 0.
+        if (epNumber == 0 || isControlTransfer(setup)) {
             val bmRequestType = setup[0].toInt() and 0xFF
             val bRequest = setup[1].toInt() and 0xFF
             val wValue = ((setup[2].toInt() and 0xFF) or ((setup[3].toInt() and 0xFF) shl 8))
             val wIndex = ((setup[4].toInt() and 0xFF) or ((setup[5].toInt() and 0xFF) shl 8))
             val wLength = ((setup[6].toInt() and 0xFF) or ((setup[7].toInt() and 0xFF) shl 8))
 
-            if ((bmRequestType and 0x80) != 0) {
-                // IN
+            val isControlIn = ((bmRequestType and 0x80) != 0) || (direction != 0)
+            return if (isControlIn) {
                 val buf = ByteArray(wLength)
                 val len = conn.controlTransfer(bmRequestType, bRequest, wValue, wIndex, buf, wLength, 5000)
-                Triple(if (len >= 0) 0 else len, maxOf(0, len), buf.copyOf(maxOf(0, len)))
+                if (len >= 0) {
+                    Triple(0, len, if (len > 0) buf.copyOf(len) else ByteArray(0))
+                } else {
+                    Triple(-5 /* -EIO */, 0, ByteArray(0))
+                }
             } else {
-                // OUT
                 val len = conn.controlTransfer(bmRequestType, bRequest, wValue, wIndex, outData, outData.size, 5000)
-                Triple(if (len >= 0) 0 else len, maxOf(0, len), ByteArray(0))
+                if (len >= 0) {
+                    Triple(0, len, ByteArray(0))
+                } else {
+                    Triple(-5 /* -EIO */, 0, ByteArray(0))
+                }
             }
-        } else if (isIn) {
+        }
+
+        // Non-control transfer: look up the interface endpoint
+        val endpoint = findEndpoint(device, epAddr, isIn)
+            ?: return Triple(-19 /* -ENODEV */, 0, ByteArray(0))
+
+        return if (isIn) {
             // Bulk/Interrupt IN
             val maxSize = maxOf(dataLen, endpoint.maxPacketSize)
             val buf = ByteArray(maxSize)
             val len = conn.bulkTransfer(endpoint, buf, maxSize, 5000)
-            Triple(if (len >= 0) 0 else len, maxOf(0, len), buf.copyOf(maxOf(0, len)))
+            if (len >= 0) {
+                Triple(0, len, if (len > 0) buf.copyOf(len) else ByteArray(0))
+            } else {
+                Triple(-5 /* -EIO */, 0, ByteArray(0))
+            }
         } else {
             // Bulk/Interrupt OUT
             val len = conn.bulkTransfer(endpoint, outData, outData.size, 5000)
-            Triple(if (len >= 0) 0 else len, maxOf(0, len), ByteArray(0))
+            if (len >= 0) {
+                Triple(0, len, ByteArray(0))
+            } else {
+                Triple(-5 /* -EIO */, 0, ByteArray(0))
+            }
         }
     }
 
-    private fun findEndpoint(device: UsbDevice, epAddr: Int): UsbEndpoint? {
+    private fun findEndpoint(device: UsbDevice, epAddr: Int, isIn: Boolean): UsbEndpoint? {
+        val targetAddr = if (isIn) (epAddr or 0x80) else (epAddr and 0x7F)
         for (i in 0 until device.interfaceCount) {
             val iface = device.getInterface(i)
             for (j in 0 until iface.endpointCount) {
                 val ep = iface.getEndpoint(j)
-                if (ep.address == epAddr) return ep
+                if (ep.address == epAddr || ep.address == targetAddr) return ep
             }
         }
         return null
@@ -388,62 +407,57 @@ class UsbIpServer(
         entry.put(busid.copyOf(32))
 
         // Rest of fields
-        entry.putInt(device.deviceId) // busnum
-        entry.putInt(device.deviceId) // devnum
-        entry.putInt(1) // speed (full)
-        entry.putShort(device.vendorId.toShort())
-        entry.putShort(device.productId.toShort())
-        entry.putShort(0) // bcdDevice
-        entry.put(device.deviceClass.toByte())
-        entry.put(device.deviceSubclass.toByte())
-        entry.put(device.deviceProtocol.toByte())
-        entry.put(0) // bConfigurationValue
-        entry.put(device.configurationCount.toByte())
-        entry.put(0) // bNumInterfaces (filled below)
-
-        // Count interfaces
-        var numIfaces = 0
-        for (i in 0 until device.interfaceCount) {
-            numIfaces += device.getInterface(i).endpointCount
-        }
-        entry.put(304, numIfaces.toByte()) // offset 304 is bNumInterfaces
+        entry.putInt(device.deviceId) // busnum (offset 288)
+        entry.putInt(device.deviceId) // devnum (offset 292)
+        entry.putInt(2) // speed: 2 = full speed (offset 296)
+        entry.putShort(device.vendorId.toShort()) // idVendor (offset 300)
+        entry.putShort(device.productId.toShort()) // idProduct (offset 302)
+        entry.putShort(0) // bcdDevice (offset 304)
+        entry.put(device.deviceClass.toByte()) // bDeviceClass (offset 306)
+        entry.put(device.deviceSubclass.toByte()) // bDeviceSubClass (offset 307)
+        entry.put(device.deviceProtocol.toByte()) // bDeviceProtocol (offset 308)
+        entry.put(0) // bConfigurationValue (offset 309)
+        entry.put(device.configurationCount.toByte()) // bNumConfigurations (offset 310)
+        entry.put(device.interfaceCount.toByte()) // bNumInterfaces (offset 311)
 
         return entry.array()
     }
 
     private fun getRawDescriptors(device: UsbDevice): ByteArray {
-        // Build raw USB descriptor tree
-        val tree = ByteArray(512) // pre-allocate
+        val raw = synchronized(connectionLock) { deviceConnection?.rawDescriptors }
+        if (raw != null && raw.isNotEmpty()) {
+            return raw
+        }
+
+        // Fallback minimal descriptor tree if rawDescriptors is unavailable
+        val tree = ByteArray(18)
         val buf = ByteBuffer.wrap(tree).order(ByteOrder.LITTLE_ENDIAN)
 
         // Device descriptor (18 bytes)
         buf.put(18.toByte()) // bLength
-        buf.put(1)  // bDescriptorType
-        buf.putShort(0x0200) // bcdUSB 2.0
+        buf.put(1.toByte())  // bDescriptorType (DEVICE)
+        buf.putShort(0x0200.toShort()) // bcdUSB 2.0
         buf.put(device.deviceClass.toByte())
         buf.put(device.deviceSubclass.toByte())
         buf.put(device.deviceProtocol.toByte())
-        buf.put(64) // bMaxPacketSize0
+        buf.put(64.toByte()) // bMaxPacketSize0
         buf.putShort(device.vendorId.toShort())
         buf.putShort(device.productId.toShort())
-        buf.putShort(0) // bcdDevice
-        buf.put(0) // iManufacturer
-        buf.put(0) // iProduct
-        buf.put(0) // iSerialNumber
+        buf.putShort(0.toShort()) // bcdDevice
+        buf.put(0.toByte()) // iManufacturer
+        buf.put(0.toByte()) // iProduct
+        buf.put(0.toByte()) // iSerialNumber
         buf.put(device.configurationCount.toByte())
 
-        // Configuration + Interface + Endpoint descriptors
-        // (simplified — real implementation would read from getRawDescriptors())
-        // ...
-
-        return tree.copyOf(buf.position())
+        return tree
     }
 
     private fun buildRetSubmit(
-        seqnum: Int, devid: Int, ep: Int, direction: Int,
+        seqnum: Int, devid: Int, direction: Int, ep: Int,
         status: Int, actualLen: Int, setup: ByteArray, inData: ByteArray
     ): ByteArray {
-        val retBuf = ByteBuffer.allocate(8 + 40 + inData.size).order(ByteOrder.BIG_ENDIAN)
+        // USB/IP header (8 bytes) + RET_SUBMIT struct (44 bytes) + data
+        val retBuf = ByteBuffer.allocate(8 + 44 + inData.size).order(ByteOrder.BIG_ENDIAN)
 
         // USB/IP header
         retBuf.putShort(USBIP_VERSION.toShort())
@@ -453,13 +467,14 @@ class UsbIpServer(
         // RET_SUBMIT struct
         retBuf.putInt(seqnum)
         retBuf.putInt(devid)
-        retBuf.putInt(direction)
+        val isRetIn = (direction != 0) || ((ep and 0x80) != 0)
+        retBuf.putInt(if (isRetIn) (1 or 0x0200) else 0)
         retBuf.putInt(ep)
         retBuf.putInt(status)
         retBuf.putInt(actualLen)
         retBuf.putInt(0) // start_frame
         retBuf.putInt(0) // number_of_packets
-        retBuf.putInt(0) // error_count
+        retBuf.putInt(if (status == 0) 0 else 1) // error_count
         retBuf.put(setup)
 
         // Data (if IN and success)

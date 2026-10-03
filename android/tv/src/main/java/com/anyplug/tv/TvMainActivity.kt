@@ -100,11 +100,12 @@ class TvMainActivity : ComponentActivity() {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            service = (binder as AnyPlugService.LocalBinder).getService()
-            serviceConnected.value = true
-            // Begin LAN discovery once bound; the service will tear it down
-            // on onDestroy or via stopDiscovery().
-            service?.startDiscovery()
+            val localBinder = binder as? AnyPlugService.LocalBinder
+            if (localBinder != null) {
+                service = localBinder.getService()
+                serviceConnected.value = true
+                service?.startDiscovery()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {

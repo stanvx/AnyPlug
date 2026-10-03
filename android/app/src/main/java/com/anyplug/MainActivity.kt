@@ -7,10 +7,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.util.Log
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -68,20 +70,34 @@ class MainActivity : ComponentActivity() {
     // Manifest only covers ATTACHED; this catches DETACHED at runtime
     private val detachReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent.action) {
+            if (intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
                 localDevices.value = usbManager.attachedDevices()
+                val detachedDevice: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                }
+                if (detachedDevice != null && serviceMode.value == AnyPlugService.Mode.SERVER) {
+                    val sharedName = service?.getSharedDeviceName() ?: ""
+                    val detachedName = detachedDevice.productName ?: detachedDevice.deviceName
+                    if (sharedName == detachedName) {
+                        Log.i(TAG, "Shared device '$sharedName' detached — stopping server")
+                        service?.onDeviceDisconnected()
+                    }
+                }
             }
         }
     }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            service = (binder as AnyPlugService.LocalBinder).getService()
-            serviceConnected.value = true
-            // Begin LAN discovery as soon as the service is bound. The
-            // service holds the multicast lock and will release it in
-            // onDestroy or when stopDiscovery() is called.
-            service?.startDiscovery()
+            val localBinder = binder as? AnyPlugService.LocalBinder
+            if (localBinder != null) {
+                service = localBinder.getService()
+                serviceConnected.value = true
+                service?.startDiscovery()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -102,6 +118,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val REQ_POST_NOTIFICATIONS = 1001
+        private const val TAG = "MainActivity"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,6 +134,9 @@ class MainActivity : ComponentActivity() {
         permissionHandler = UsbPermissionHandler(this)
 
         localDevices.value = usbManager.attachedDevices()
+
+        // If launched by a USB attach while awaiting reconnect, retry
+        tryReconnect(intent)
 
         requestNotificationPermissionIfNeeded()
 
@@ -153,6 +173,35 @@ class MainActivity : ComponentActivity() {
         if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED ||
             intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
             localDevices.value = usbManager.attachedDevices()
+        }
+        tryReconnect(intent)
+    }
+
+    /**
+     * If the service is awaiting a device and the attached intent matches
+     * the last-shared VID/PID, restart the server automatically.
+     */
+    private fun tryReconnect(intent: Intent) {
+        if (intent.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        if (serviceMode.value != AnyPlugService.Mode.AWAITING_DEVICE) return
+
+        val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        } ?: return
+
+        val svc = service ?: return
+        val name = device.productName ?: device.deviceName
+        Log.i(TAG, "Reconnect: auto-restarting server for $name (${device.vendorId.toString(16)}:${device.productId.toString(16)})")
+
+        if (!usbManager.hasPermission(device)) {
+            permissionHandler?.requestPermission(device) { granted ->
+                if (granted) svc.startServer(name, device.vendorId, device.productId)
+            }
+        } else {
+            svc.startServer(name, device.vendorId, device.productId)
         }
     }
 

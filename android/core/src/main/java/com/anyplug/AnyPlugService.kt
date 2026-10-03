@@ -14,6 +14,7 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import com.anyplug.client.UsbIpClient
+import com.anyplug.discovery.ServerAdvertiser
 import com.anyplug.discovery.ServerDiscovery
 import com.anyplug.model.DiscoveredServer
 import com.anyplug.server.UsbIpServer
@@ -51,6 +52,11 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
      * Created in [onCreate] and started/stopped via [startDiscovery] / [stopDiscovery].
      */
     private var serverDiscovery: ServerDiscovery? = null
+
+    /**
+     * mDNS advertiser for when this device is running as a USB/IP server.
+     */
+    private var serverAdvertiser: ServerAdvertiser? = null
 
     /**
      * Stream of currently-discovered servers. UI collects this to render
@@ -127,6 +133,7 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
         // mDNS LAN discovery — starts lazily via [startDiscovery] so the
         // multicast lock is not held before the user opens the client panel.
         serverDiscovery = ServerDiscovery(applicationContext, serviceScope)
+        serverAdvertiser = ServerAdvertiser(applicationContext)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -179,6 +186,8 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
         serviceScope.cancel()
         serverDiscovery?.dispose()
         serverDiscovery = null
+        serverAdvertiser?.unregister()
+        serverAdvertiser = null
         if (wakeLock?.isHeld == true) wakeLock?.release()
         if (transferWakeLock?.isHeld == true) transferWakeLock?.release()
         serverRunner?.stop()
@@ -266,10 +275,12 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
             deviceFilter = UsbDeviceFilter(vid, pid),
             wakeLockManager = this
         )
+        serverAdvertiser?.register(deviceName, vid, pid)
         serviceScope.launch {
             try {
                 serverRunner?.start()
             } catch (e: Exception) {
+                serverAdvertiser?.unregister()
                 // SocketException on accept() means we called stop() — not an error.
                 if (e is java.net.SocketException && currentMode == Mode.IDLE) {
                     android.util.Log.i("AnyPlugService", "Server accept() interrupted by stop()")
@@ -366,6 +377,7 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
      */
     fun onDeviceDisconnected() {
         android.util.Log.i("AnyPlugService", "Device '$sharedDeviceName' disconnected — awaiting reconnect")
+        serverAdvertiser?.unregister()
         serverRunner?.stop()
         serverRunner = null
         currentMode = Mode.AWAITING_DEVICE
@@ -382,6 +394,7 @@ class AnyPlugService : LifecycleService(), WakeLockManager {
         currentMode = Mode.IDLE
         _state.value = Mode.IDLE
         sharedDeviceName = ""
+        serverAdvertiser?.unregister()
         serverRunner?.stop()
         clientRunner?.stop()
         if (wakeLock?.isHeld == true) wakeLock?.release()

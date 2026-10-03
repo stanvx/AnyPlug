@@ -1,11 +1,13 @@
 package com.anyplug.tv.ui
 
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.anyplug.model.DiscoveredServer
 import com.anyplug.model.LocalUsbDevice
 import com.anyplug.model.RemoteDevice
+import org.robolectric.annotation.Config
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,10 +24,11 @@ import org.junit.runner.RunWith
  * - Manual connection input renders correctly
  */
 @RunWith(AndroidJUnit4::class)
+@Config(sdk = [28])
 class TvLeanbackScreenTest {
 
     @get:Rule
-    val composeTestRule = createComposeRule()
+    val composeTestRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
     fun tvSectionHeader_displaysTitle() {

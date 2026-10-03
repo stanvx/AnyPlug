@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- USB Host API for USB/IP passthrough -->
-    <uses-feature android:name="android.hardware.usb.host" android:required="true" />
+    <!-- USB Host API for USB/IP passthrough (optional so TV can act as pure client) -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 

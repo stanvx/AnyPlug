@@ -237,20 +237,54 @@ class ServerDiscovery(
         val props: Map<String, ByteArray> = propertyNames
             .associateWith { name -> info.getPropertyBytes(name) ?: ByteArray(0) }
 
-        // (1) devices=vid:pid:bus:name,vid:pid:bus:name
+        // (1) devices=vid:pid:bus:name,... or vid=0xVVVV,pid=0xPPPP,bus=B-B,n=NAME,...
         val devicesStr = props["devices"]?.toString(Charsets.UTF_8)
         if (!devicesStr.isNullOrBlank()) {
-            return devicesStr.split(",").mapNotNull { entry ->
-                val parts = entry.split(":")
-                if (parts.size < 4) return@mapNotNull null
-                val vid = parts[0].toIntOrNull(16) ?: return@mapNotNull null
-                val pid = parts[1].toIntOrNull(16) ?: return@mapNotNull null
-                RemoteDevice(
-                    name = parts[3],
-                    busId = parts[2],
-                    vid = vid,
-                    pid = pid,
-                )
+            if (devicesStr.contains("vid=")) {
+                // Key-value format produced by AnyPlug Rust server
+                val list = mutableListOf<RemoteDevice>()
+                val tokens = devicesStr.split(",")
+                var currentVid: Int? = null
+                var currentPid: Int? = null
+                var currentBus = "1-1"
+                var currentName = "USB Device"
+                for (token in tokens) {
+                    val pair = token.trim().split("=", limit = 2)
+                    if (pair.size == 2) {
+                        when (pair[0]) {
+                            "vid" -> {
+                                if (currentVid != null && currentPid != null) {
+                                    list.add(RemoteDevice(name = currentName, busId = currentBus, vid = currentVid, pid = currentPid))
+                                    currentBus = "1-1"
+                                    currentName = "USB Device"
+                                }
+                                currentVid = pair[1].removePrefix("0x").toIntOrNull(16) ?: pair[1].toIntOrNull()
+                            }
+                            "pid" -> currentPid = pair[1].removePrefix("0x").toIntOrNull(16) ?: pair[1].toIntOrNull()
+                            "bus" -> currentBus = pair[1]
+                            "n" -> currentName = pair[1]
+                        }
+                    }
+                }
+                if (currentVid != null && currentPid != null) {
+                    list.add(RemoteDevice(name = currentName, busId = currentBus, vid = currentVid, pid = currentPid))
+                }
+                if (list.isNotEmpty()) return list
+            } else {
+                // Colon-delimited format: vid:pid:bus:name,vid:pid:bus:name
+                val list = devicesStr.split(",").mapNotNull { entry ->
+                    val parts = entry.split(":")
+                    if (parts.size < 4) return@mapNotNull null
+                    val vid = parts[0].toIntOrNull(16) ?: parts[0].toIntOrNull() ?: return@mapNotNull null
+                    val pid = parts[1].toIntOrNull(16) ?: parts[1].toIntOrNull() ?: return@mapNotNull null
+                    RemoteDevice(
+                        name = parts[3],
+                        busId = parts[2],
+                        vid = vid,
+                        pid = pid,
+                    )
+                }
+                if (list.isNotEmpty()) return list
             }
         }
 

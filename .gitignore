@@ -11,6 +11,7 @@ target/
 # ─── Android / Gradle ───────────────────────────────────
 .gradle/
 build/
+android/rust/usbip-android/Cargo.lock
 *.apk
 *.aab
 *.ap_
