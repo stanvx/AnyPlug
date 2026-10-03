@@ -178,7 +178,7 @@ mod tests {
         ];
         let mut source = FakeHotplugSource::new(events.clone());
 
-        assert_eq!(source.poll(), events.get(0).cloned());
+        assert_eq!(source.poll(), events.first().cloned());
         assert_eq!(source.poll(), events.get(1).cloned());
         // After exhaustion, poll returns None.
         assert_eq!(source.poll(), None);

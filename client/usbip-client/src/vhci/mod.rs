@@ -99,11 +99,14 @@ pub(crate) fn detect_backend() -> UsbIpResult<Box<dyn VhciBackend>> {
 // ─── Mock Backend (testing) ─────────────────────────────────────
 
 #[cfg(test)]
+type RecordedUrb = (u32, u32, i32, u32, Vec<u8>);
+
+#[cfg(test)]
 pub(crate) struct MockVhciBackend {
     /// Track created devices.
     devices: Mutex<Vec<VhciDevice>>,
     /// Track completed URBs.
-    urbs: Mutex<Vec<(u32, u32, i32, u32, Vec<u8>)>>,
+    urbs: Mutex<Vec<RecordedUrb>>,
     /// Next port number to assign.
     next_port: Mutex<u32>,
 }
@@ -121,7 +124,7 @@ impl MockVhciBackend {
     /// Snapshot of URBs recorded by `complete_urb`. Returns `(seqnum,
     /// devid, status, actual_length, data)` tuples in completion order.
     /// Cloned so tests can assert without holding the mutex.
-    pub(crate) fn recorded_urbs(&self) -> Vec<(u32, u32, i32, u32, Vec<u8>)> {
+    pub(crate) fn recorded_urbs(&self) -> Vec<RecordedUrb> {
         self.urbs.lock().unwrap().clone()
     }
 }

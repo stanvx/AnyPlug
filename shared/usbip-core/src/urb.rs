@@ -112,9 +112,7 @@ impl UsbIpRetSubmit {
 
     /// Returns true if data follows the header (successful IN transfer).
     pub fn has_data(&self) -> bool {
-        self.is_success()
-            && (self.direction.get() & crate::protocol::URB_DIR_IN) != 0
-            && self.actual_length.get() > 0
+        self.is_success() && (self.direction.get() != 0) && self.actual_length.get() > 0
     }
 
     /// Total wire size including data for IN transfers.

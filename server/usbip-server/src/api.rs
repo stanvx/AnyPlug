@@ -161,8 +161,11 @@ impl Default for ApiConfig {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct StatusResponse {
     pub status: String,
+    pub version: String,
     pub uptime_seconds: f64,
+    pub uptime_secs: u64,
     pub active_connections: usize,
+    pub devices_count: usize,
     pub urb_throughput: u64,
     pub error_count: u64,
     /// Stable per-server UUIDv7. Lets clients dedupe probes from the
@@ -247,11 +250,15 @@ async fn get_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let uptime = state.start_time.elapsed().as_secs_f64();
     let active = state.exports.lock().await.len();
     let cfg = state.config.read().await;
+    let devices_count = state.device_lister.list_devices().len();
 
     Json(StatusResponse {
         status: "running".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         uptime_seconds: uptime,
+        uptime_secs: uptime as u64,
         active_connections: active,
+        devices_count,
         urb_throughput: 0,
         error_count: 0,
         server_id: cfg.server_id.clone(),
@@ -431,9 +438,9 @@ pub(crate) struct ConfigUpdateRequest {
 )]
 async fn post_scan(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<ScanRequest>,
+    body: Option<Json<ScanRequest>>,
 ) -> impl IntoResponse {
-    let timeout = req.timeout_secs.unwrap_or(5).clamp(1, 30);
+    let timeout = body.and_then(|Json(req)| req.timeout_secs).unwrap_or(5).clamp(1, 30);
     let servers = state.mdns_browser.browse(timeout);
     Json(servers)
 }

@@ -305,17 +305,18 @@ mod tests {
         assert_eq!(cli.bind_iface.as_deref(), Some("en0"));
     }
 
+    type LookupFn = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
     #[test]
     fn resolve_bind_address_uses_iface_ip() {
         // When --bind-iface is set, resolve_bind_address must use the
         // resolver to translate the interface name into an IP, not the
         // --bind default. The resolver is injected so the test does not
         // depend on the host's real network interfaces.
-        let lookup: Box<dyn Fn(&str) -> Option<String> + Send + Sync> =
-            Box::new(|name| match name {
-                "en0" => Some("192.168.1.21".to_string()),
-                _ => None,
-            });
+        let lookup: LookupFn = Box::new(|name| match name {
+            "en0" => Some("192.168.1.21".to_string()),
+            _ => None,
+        });
         let got = resolve_bind_address("0.0.0.0", Some("en0"), &lookup).unwrap();
         assert_eq!(got, "192.168.1.21");
     }
@@ -326,7 +327,7 @@ mod tests {
         // value rather than crashing — the user may have brought the
         // interface up later, or be running on a host with no resolvable
         // interfaces.
-        let lookup: Box<dyn Fn(&str) -> Option<String> + Send + Sync> = Box::new(|_| None);
+        let lookup: LookupFn = Box::new(|_| None);
         let got = resolve_bind_address("10.0.0.5", Some("eth9"), &lookup).unwrap();
         assert_eq!(got, "10.0.0.5");
     }
@@ -335,7 +336,7 @@ mod tests {
     fn resolve_bind_address_passthrough_when_no_iface() {
         // No --bind-iface: the resolver is never consulted; --bind is
         // returned unchanged.
-        let lookup: Box<dyn Fn(&str) -> Option<String> + Send + Sync> =
+        let lookup: LookupFn =
             Box::new(|_| panic!("resolver must not be called without --bind-iface"));
         let got = resolve_bind_address("127.0.0.1", None, &lookup).unwrap();
         assert_eq!(got, "127.0.0.1");
@@ -348,7 +349,7 @@ mod tests {
         // not 0.0.0.0. We exercise the resolution + bind path on
         // 127.0.0.1 (loopback, always present) and verify the
         // resulting socket reports that address — not 0.0.0.0.
-        let lookup: Box<dyn Fn(&str) -> Option<String> + Send + Sync> =
+        let lookup: LookupFn =
             Box::new(|name| if name == "lo0" { Some("127.0.0.1".into()) } else { None });
         let resolved = resolve_bind_address("0.0.0.0", Some("lo0"), &lookup).unwrap();
         // Bind on an ephemeral port at the resolved address.

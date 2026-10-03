@@ -22,7 +22,7 @@ use usbip_core::protocol::{UsbIpDeviceEntry, U16BE, U32BE};
 use usbip_server::api::{self, DeviceLister, DiscoveredServer, MdnsBrowser, RemoteImporter};
 
 /// Serialise env-var manipulation across tests so they don't trip each other up.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 // ── Fakes ───────────────────────────────────────────────────────────
 
@@ -290,6 +290,30 @@ async fn scan_clamps_timeout_to_min_one() {
     assert_eq!(browser.last_timeout(), Some(1));
 }
 
+/// `POST /api/scan` with no body at all defaults to 5 seconds.
+#[tokio::test]
+async fn scan_with_no_body_defaults_to_five() {
+    let browser = Arc::new(FakeBrowser::new(vec![]));
+    let app = test_app_with_browser(browser.clone());
+
+    let req =
+        axum::http::Request::builder().method("POST").uri("/api/scan").body(Body::empty()).unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(browser.last_timeout(), Some(5));
+}
+
+/// `GET /api/status` returns all expected fields including version, uptime_secs, devices_count.
+#[tokio::test]
+async fn status_returns_all_expected_fields() {
+    let app = test_app_with_browser(Arc::new(FakeBrowser::new(vec![])));
+    let (status, body) = get_json(app, "/api/status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["version"].is_string());
+    assert!(body["uptime_secs"].is_number());
+    assert!(body["devices_count"].is_number());
+}
+
 /// `Server::with_backend(FakeBackend)` builds an `AppState` whose
 /// `device_lister` reflects the backend's devices — verifying the
 /// production wiring (no mock path).
@@ -497,7 +521,7 @@ async fn put_config_persists_and_reloads() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cfg_path = tmp.path().join("server.toml");
 
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK.lock().await;
     unsafe { std::env::set_var("ANYPLUG_CONFIG_PATH", &cfg_path) };
 
     let browser = Arc::new(FakeBrowser::new(vec![]));
@@ -581,7 +605,7 @@ async fn ws_events_forwards_latency_frames() {
     assert_eq!(json["payload"]["seqnum"], 42);
 
     let _ = ws.close(None).await;
-    let _ = ws_stream_send_close(ws);
+    ws_stream_send_close(ws).await;
     server.abort();
 }
 
