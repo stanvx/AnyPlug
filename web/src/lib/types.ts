@@ -10,13 +10,24 @@ export interface Device {
 
 export interface ServerStatus {
   status: string;
-  version: string;
-  uptime: number;
+  version?: string;
+  uptime?: number;
+  uptime_seconds?: number;
+  uptime_secs?: number;
   active_connections: number;
-  devices_count: number;
-  uptime_secs: number;
-  memory_usage: number;
+  devices_count?: number;
+  server_id?: string;
+  server_name?: string;
+  port?: number;
+  memory_usage?: number;
   error_count: number;
+  urb_throughput?: number;
+}
+
+export interface DiscoveredServer {
+  host: string;
+  port: number;
+  txt?: Record<string, string>;
 }
 
 export interface ServerConfig {
