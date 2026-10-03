@@ -35,7 +35,7 @@ axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors"] }
 futures = { workspace = true }
 utoipa = { version = "5", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa-swagger-ui = { version = "9", features = ["axum", "reqwest"] }
 chrono = { workspace = true }
 tower = { workspace = true }
 prometheus = { version = "0.13", features = ["process"] }
